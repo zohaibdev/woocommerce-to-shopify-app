@@ -27,13 +27,10 @@ REM The SPA shell must never sit in public (collides with host placeholders).
 if exist "%ROOT%backend\public\index.html" del /Q "%ROOT%backend\public\index.html"
 
 echo [4/4] Packaging public-assets.zip ...
-if exist "%ROOT%.deploy" rmdir /S /Q "%ROOT%.deploy"
-mkdir "%ROOT%.deploy"
-xcopy /E /I /Y "%ROOT%frontend\dist\assets" "%ROOT%.deploy\assets" >nul
-copy /Y "%ROOT%frontend\dist\favicon.svg" "%ROOT%.deploy\" >nul
-copy /Y "%ROOT%frontend\dist\icons.svg"   "%ROOT%.deploy\" >nul
-powershell -NoProfile -Command "Compress-Archive -Path '%ROOT%.deploy\*' -DestinationPath '%ROOT%public-assets.zip' -Force"
-rmdir /S /Q "%ROOT%.deploy"
+REM Built with Python's zipfile, NOT Compress-Archive: PowerShell 5.1 writes
+REM Windows backslashes into zip entries, which Linux servers then extract as
+REM files literally named "assets\index-xxx.js" instead of an assets/ folder.
+python -c "import zipfile,os;src=r'%ROOT%frontend\dist';out=r'%ROOT%public-assets.zip';z=zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED);[z.write(os.path.join(r,f),os.path.relpath(os.path.join(r,f),src).replace(os.sep,'/')) for r,_,fs in os.walk(src) for f in fs if f!='index.html'];z.close();print('zip ok')" || (echo PYTHON ZIP FAILED - is python installed? & exit /b 1)
 
 echo.
 echo ============================================================

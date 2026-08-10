@@ -3,23 +3,30 @@
 use Illuminate\Support\Facades\Route;
 
 /**
- * Serves the built React SPA.
+ * Public landing page + the built React SPA.
  *
- * The HTML lives in resources/spa/index.html (NOT public/) so that:
- *  - deploying never collides with a host's default public_html/index.html,
- *  - Laravel always controls the response for "/" instead of Apache serving a
- *    stray static file first.
+ * "/"  → landing page (public/landing.html) for ordinary visitors,
+ *        but the SPA when Shopify opens the app (it always passes ?shop= / ?host=).
+ * Any other non-/api path → the SPA, so client-side routes such as /admin,
+ *        /migrations and /support survive a hard refresh.
  *
- * Only the hashed build assets go into public/assets. The catch-all keeps
- * client-side routes (/admin, /migrations, /support) working on hard refresh;
- * /api/* is matched earlier by routes/api.php and is unaffected.
+ * The SPA shell lives in resources/spa/index.html (NOT public/) so deploying
+ * can never collide with a host's default public_html/index.html.
  */
-Route::get('/{any?}', function () {
+Route::get('/{any?}', function (\Illuminate\Http\Request $request, ?string $any = null) {
     $spa = resource_path('spa/index.html');
+    $landing = public_path('landing.html');
+
+    // Shopify always sends shop/host when loading or returning to the app.
+    $isShopifyContext = $request->hasAny(['shop', 'host', 'embedded', 'hmac']);
+    $isRoot = $any === null || $any === '';
+
+    if ($isRoot && ! $isShopifyContext && file_exists($landing)) {
+        return response()->file($landing, ['Cache-Control' => 'no-cache, must-revalidate']);
+    }
 
     if (! file_exists($spa)) {
-        // Legacy/local fallback, then Laravel's welcome page.
-        $spa = public_path('index.html');
+        $spa = public_path('index.html'); // legacy/local fallback
     }
 
     return file_exists($spa)
