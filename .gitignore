@@ -1,0 +1,87 @@
+# ---------------------------------------------------------------------------
+# Store Shift — WooCommerce → Shopify migration app
+# Root ignore file. backend/ (Laravel) and frontend/ (Vite) also have their own;
+# patterns here apply recursively and act as a backstop for both.
+# ---------------------------------------------------------------------------
+
+# --- Secrets (NEVER commit: Shopify API secret, Woo keys, APP_KEY) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+auth.json
+
+# --- Dependencies ---
+/vendor/
+**/vendor/
+node_modules/
+.pnp
+.pnp.js
+
+# --- Build output ---
+dist/
+build/
+/public/build/
+/public/hot
+/public/storage
+.vite/
+
+# --- Laravel runtime ---
+/backend/storage/*.key
+**/storage/framework/cache/*
+**/storage/framework/sessions/*
+**/storage/framework/testing/*
+**/storage/framework/views/*
+**/storage/logs/*
+!**/storage/**/.gitignore
+**/bootstrap/cache/*
+!**/bootstrap/cache/.gitignore
+Homestead.json
+Homestead.yaml
+
+# --- Local database (SQLite dev DB) ---
+*.sqlite
+*.sqlite-journal
+*.sqlite3
+*.db
+
+# --- Logs & temp ---
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+/scratchpad/
+*.tmp
+*.bak
+
+# --- Testing / coverage ---
+/coverage/
+.phpunit.result.cache
+.phpunit.cache/
+
+# --- Tooling caches ---
+.php-cs-fixer.cache
+.eslintcache
+*.tsbuildinfo
+
+# --- Editors / IDEs ---
+.idea/
+.vscode/
+!.vscode/extensions.json
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# --- OS files ---
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# --- Local tooling / agent state ---
+.claude/settings.local.json
