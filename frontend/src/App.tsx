@@ -1,9 +1,10 @@
-import { Frame, Navigation } from "@shopify/polaris";
+import { Frame, Navigation, FooterHelp, Link, BlockStack, InlineStack, Text, Box } from "@shopify/polaris";
 import {
   HomeIcon,
   OrderIcon,
   StoreIcon,
   SettingsIcon,
+  QuestionCircleIcon,
 } from "@shopify/polaris-icons";
 import { Routes, Route, useNavigate, useLocation } from "react-router-dom";
 import Dashboard from "./pages/Dashboard";
@@ -12,10 +13,19 @@ import NewMigration from "./pages/NewMigration";
 import MigrationHistory from "./pages/MigrationHistory";
 import MigrationDetails from "./pages/MigrationDetails";
 import Settings from "./pages/Settings";
+import Support from "./pages/Support";
+import { loadSettings } from "./settings";
+import AdminApp from "./admin/AdminApp";
 
 function App() {
   const navigate = useNavigate();
   const location = useLocation();
+  const prefs = loadSettings();
+
+  // The Super Admin dashboard is a separate surface with its own auth and chrome.
+  if (location.pathname.startsWith("/admin")) {
+    return <AdminApp />;
+  }
 
   const navMarkup = (
     <Navigation location={location.pathname}>
@@ -40,6 +50,12 @@ function App() {
             selected: location.pathname === "/woocommerce",
           },
           {
+            label: "Support",
+            icon: QuestionCircleIcon,
+            onClick: () => navigate("/support"),
+            selected: location.pathname === "/support",
+          },
+          {
             label: "Settings",
             icon: SettingsIcon,
             onClick: () => navigate("/settings"),
@@ -59,7 +75,33 @@ function App() {
         <Route path="/migrations/new" element={<NewMigration />} />
         <Route path="/migrations/:id" element={<MigrationDetails />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/support" element={<Support />} />
       </Routes>
+
+      <FooterHelp>
+        <BlockStack gap="100" inlineAlign="center">
+          <InlineStack gap="200" blockAlign="center" align="center">
+            <Link url={prefs.supportUrl} external>
+              Support
+            </Link>
+            <Text as="span" tone="subdued">
+              ·
+            </Text>
+            <Link url={prefs.docsUrl} external>
+              Documentation
+            </Link>
+            <Text as="span" tone="subdued">
+              ·
+            </Text>
+            <Link onClick={() => navigate("/settings")}>Settings</Link>
+          </InlineStack>
+          <Box>
+            <Text as="span" variant="bodySm" tone="subdued">
+              Store Shift — WooCommerce → Shopify migration
+            </Text>
+          </Box>
+        </BlockStack>
+      </FooterHelp>
     </Frame>
   );
 }

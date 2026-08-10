@@ -14,6 +14,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'shopify.session' => \App\Http\Middleware\AuthenticateSessionToken::class,
+            'admin.auth' => \App\Http\Middleware\AuthenticateAdmin::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

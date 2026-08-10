@@ -25,11 +25,18 @@ import {
   PersonIcon,
   OrderIcon,
   CheckCircleIcon,
-  BookIcon,
   QuestionCircleIcon,
+  PlayIcon,
 } from "@shopify/polaris-icons";
 import { useNavigate } from "react-router-dom";
-import { api, type Shop, type EntityCount, type Migration } from "../api/client";
+import {
+  api,
+  type Shop,
+  type EntityCount,
+  type Migration,
+  type ContentItem,
+} from "../api/client";
+import { loadSettings } from "../settings";
 
 const STAT_META: Record<string, { label: string; icon: typeof ProductIcon }> = {
   product: { label: "Products", icon: ProductIcon },
@@ -39,6 +46,32 @@ const STAT_META: Record<string, { label: string; icon: typeof ProductIcon }> = {
 };
 
 const ACTIVE = ["pending", "processing", "paused"];
+
+/**
+ * Icon + heading on a shared baseline. Polaris <Icon> renders a block-level svg
+ * with its own line-height, so pairing it directly with <Text> sits a couple of
+ * pixels off — the fixed-size flex box keeps them optically centred.
+ */
+function IconTitle({
+  icon,
+  children,
+}: {
+  icon: typeof ProductIcon;
+  children: React.ReactNode;
+}) {
+  return (
+    <InlineStack gap="200" blockAlign="center" wrap={false}>
+      <span
+        style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 20, height: 20 }}
+      >
+        <Icon source={icon} tone="base" />
+      </span>
+      <Text as="h2" variant="headingMd">
+        {children}
+      </Text>
+    </InlineStack>
+  );
+}
 
 const statusTone = (s: Migration["status"]) =>
   s === "completed"
@@ -51,6 +84,7 @@ const statusTone = (s: Migration["status"]) =>
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const prefs = loadSettings();
   const [shop, setShop] = useState<Shop | null>(null);
   const [counts, setCounts] = useState<EntityCount[]>([]);
   const [countsLoading, setCountsLoading] = useState(false);
@@ -58,7 +92,16 @@ export default function Dashboard() {
   const [running, setRunning] = useState<Migration | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [content, setContent] = useState<ContentItem[]>([]);
   const timer = useRef<number | null>(null);
+
+  // Admin-managed content wins; fall back to local settings when none exists.
+  const byType = (t: string) => content.filter((c) => c.type === t);
+  const video = byType("tutorial_video")[0];
+  const videoUrl = video?.url || prefs.tutorialVideoUrl;
+  const supportItem = byType("support_link")[0];
+  const supportUrl = supportItem?.url || prefs.supportUrl;
+  const announcements = byType("announcement");
 
   const pollRunning = useCallback(async (id: number) => {
     try {
@@ -79,6 +122,9 @@ export default function Dashboard() {
       try {
         const s = await api.getShop();
         setShop(s);
+
+        // Content is admin-managed; never let it block the dashboard.
+        api.content().then(({ data }) => setContent(data)).catch(() => undefined);
         if (s.woocommerce_connected) {
           // Migrations are fast (DB) — gate the page on these only.
           const { data } = await api.listMigrations();
@@ -114,21 +160,39 @@ export default function Dashboard() {
     return (
       <Card key={type}>
         <BlockStack gap="200">
-          <InlineStack gap="200" blockAlign="center">
-            <Box background="bg-surface-secondary" padding="200" borderRadius="200">
-              <Icon source={meta.icon} tone="base" />
+          <InlineStack gap="200" blockAlign="center" wrap={false}>
+            {/* Fixed square keeps every card's icon on the same baseline. */}
+            <Box
+              background="bg-surface-secondary"
+              borderRadius="200"
+              width="36px"
+              minHeight="36px"
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  height: "36px",
+                }}
+              >
+                <Icon source={meta.icon} tone="base" />
+              </div>
             </Box>
-            <Text as="span" tone="subdued" variant="bodySm">
+            <Text as="span" tone="subdued" variant="bodySm" truncate>
               {meta.label}
             </Text>
           </InlineStack>
-          {countsLoading ? (
-            <SkeletonDisplayText size="small" />
-          ) : (
-            <Text as="span" variant="heading2xl">
-              {count.toLocaleString()}
-            </Text>
-          )}
+          {/* Reserve the value row's height so cards don't jump while loading. */}
+          <Box minHeight="32px">
+            {countsLoading ? (
+              <SkeletonDisplayText size="small" />
+            ) : (
+              <Text as="span" variant="heading2xl">
+                {count.toLocaleString()}
+              </Text>
+            )}
+          </Box>
         </BlockStack>
       </Card>
     );
@@ -178,6 +242,18 @@ export default function Dashboard() {
           </Layout.Section>
         )}
 
+        {announcements.map((a) => (
+          <Layout.Section key={a.id}>
+            <Banner
+              tone="info"
+              title={a.title}
+              action={a.url ? { content: "Learn more", url: a.url, external: true } : undefined}
+            >
+              {a.body}
+            </Banner>
+          </Layout.Section>
+        ))}
+
         {shop?.needs_scope_update && (
           <Layout.Section>
             <Banner
@@ -208,8 +284,18 @@ export default function Dashboard() {
                 orders into Shopify — safely, in the background.
               </Text>
               {shop?.woocommerce_connected ? (
-                <InlineStack gap="100" blockAlign="center">
-                  <Icon source={CheckCircleIcon} tone="success" />
+                <InlineStack gap="150" blockAlign="center" wrap={false}>
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 20,
+                      height: 20,
+                    }}
+                  >
+                    <Icon source={CheckCircleIcon} tone="success" />
+                  </span>
                   <Badge tone="success">WooCommerce connected</Badge>
                 </InlineStack>
               ) : (
@@ -316,52 +402,74 @@ export default function Dashboard() {
                 </Card>
 
                 <BlockStack gap="400">
-                  {/* Documentation */}
-                  <Card>
-                    <BlockStack gap="300">
-                      <InlineStack gap="200" blockAlign="center">
-                        <Icon source={BookIcon} tone="base" />
-                        <Text as="h2" variant="headingMd">
-                          Documentation
-                        </Text>
-                      </InlineStack>
-                      <Text as="p" tone="subdued" variant="bodySm">
-                        Learn how migrations work, what data maps where, and how to handle large
-                        stores.
-                      </Text>
-                      <InlineStack>
-                        <Button
-                          onClick={() =>
-                            window.open("https://woocommerce.com/document/woocommerce-rest-api/", "_blank")
-                          }
-                        >
-                          Read the docs
-                        </Button>
-                      </InlineStack>
-                    </BlockStack>
-                  </Card>
-
                   {/* Support */}
                   <Card>
                     <BlockStack gap="300">
-                      <InlineStack gap="200" blockAlign="center">
-                        <Icon source={QuestionCircleIcon} tone="base" />
-                        <Text as="h2" variant="headingMd">
-                          Support
-                        </Text>
-                      </InlineStack>
+                      <IconTitle icon={QuestionCircleIcon}>
+                        {supportItem?.title || "Support"}
+                      </IconTitle>
                       <Text as="p" tone="subdued" variant="bodySm">
-                        Something not migrating as expected? We're here to help.
+                        {supportItem?.body ||
+                          "Something not migrating as expected? We're here to help."}
                       </Text>
-                      <InlineStack>
-                        <Button onClick={() => window.open("mailto:support@example.com", "_blank")}>
-                          Contact support
+                      <InlineStack gap="200">
+                        <Button variant="primary" onClick={() => navigate("/support")}>
+                          Get help
                         </Button>
+                        {supportUrl && (
+                          <Button onClick={() => window.open(supportUrl, "_blank")}>
+                            Contact support
+                          </Button>
+                        )}
                       </InlineStack>
                     </BlockStack>
                   </Card>
                 </BlockStack>
               </InlineGrid>
+            </Layout.Section>
+
+            {/* Video tutorial — managed by the super admin (Dashboard content) */}
+            <Layout.Section>
+              <Card>
+                <BlockStack gap="300">
+                  <IconTitle icon={PlayIcon}>{video?.title || "Video tutorial"}</IconTitle>
+                  {video?.body && (
+                    <Text as="p" tone="subdued" variant="bodySm">
+                      {video.body}
+                    </Text>
+                  )}
+
+                  {videoUrl ? (
+                    <Box borderRadius="200" overflowX="hidden" overflowY="hidden">
+                      <div style={{ position: "relative", paddingTop: "56.25%" }}>
+                        <iframe
+                          src={videoUrl}
+                          title="Store Shift tutorial"
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture"
+                          allowFullScreen
+                          style={{
+                            position: "absolute",
+                            top: 0,
+                            left: 0,
+                            width: "100%",
+                            height: "100%",
+                            border: 0,
+                          }}
+                        />
+                      </div>
+                    </Box>
+                  ) : (
+                    <Box background="bg-surface-secondary" padding="500" borderRadius="200">
+                      <BlockStack gap="200" inlineAlign="center">
+                        <Text as="p" tone="subdued" alignment="center">
+                          No tutorial video configured yet.
+                        </Text>
+                        <Button onClick={() => navigate("/settings")}>Add a video</Button>
+                      </BlockStack>
+                    </Box>
+                  )}
+                </BlockStack>
+              </Card>
             </Layout.Section>
           </>
         )}

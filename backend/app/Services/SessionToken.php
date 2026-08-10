@@ -13,9 +13,21 @@ class SessionToken
     /** Verify a session-token JWT and return the shop domain, or null. */
     public static function shopDomain(string $jwt): ?string
     {
+        return self::verify($jwt)['shop'];
+    }
+
+    /**
+     * Verify a session token and report why it failed.
+     *
+     * @return array{shop: ?string, reason: ?string}
+     */
+    public static function verify(string $jwt): array
+    {
+        $fail = fn (string $reason) => ['shop' => null, 'reason' => $reason];
+
         $parts = explode('.', $jwt);
         if (count($parts) !== 3) {
-            return null;
+            return $fail('malformed_jwt');
         }
         [$header64, $payload64, $signature64] = $parts;
 
@@ -24,32 +36,39 @@ class SessionToken
             hash_hmac('sha256', "{$header64}.{$payload64}", ShopifyOAuth::apiSecret(), true)
         );
         if (! hash_equals($expected, $signature64)) {
-            return null;
+            return $fail('bad_signature (SHOPIFY_API_SECRET does not match the app that issued this token)');
         }
 
         $payload = json_decode(self::base64UrlDecode($payload64), true);
         if (! is_array($payload)) {
-            return null;
+            return $fail('unreadable_payload');
         }
 
         $now = time();
-        // exp / nbf validation (allow small clock skew).
-        if (isset($payload['exp']) && $now >= (int) $payload['exp'] + 5) {
-            return null;
+        // exp / nbf validation. Allow clock skew between this server and Shopify —
+        // without it, a server running even ~30s slow rejects every valid token.
+        $leeway = (int) config('services.shopify.token_leeway', 60);
+
+        if (isset($payload['exp']) && $now >= (int) $payload['exp'] + $leeway) {
+            return $fail('expired (check system clock)');
         }
-        if (isset($payload['nbf']) && $now < (int) $payload['nbf'] - 5) {
-            return null;
+        if (isset($payload['nbf']) && $now < (int) $payload['nbf'] - $leeway) {
+            return $fail('not_yet_valid (check system clock)');
         }
         // Token must be for THIS app.
         if (($payload['aud'] ?? null) !== ShopifyOAuth::apiKey()) {
-            return null;
+            return $fail('aud_mismatch (token aud=' . ($payload['aud'] ?? 'none') . ', expected=' . ShopifyOAuth::apiKey() . ')');
         }
 
         // The shop is in `dest` (and `iss`), e.g. "https://shop.myshopify.com".
         $dest = $payload['dest'] ?? $payload['iss'] ?? '';
         $host = parse_url($dest, PHP_URL_HOST) ?: '';
 
-        return ShopifyOAuth::isValidShopDomain($host) ? $host : null;
+        if (! ShopifyOAuth::isValidShopDomain($host)) {
+            return $fail('bad_dest (' . $dest . ')');
+        }
+
+        return ['shop' => $host, 'reason' => null];
     }
 
     private static function base64UrlEncode(string $data): string

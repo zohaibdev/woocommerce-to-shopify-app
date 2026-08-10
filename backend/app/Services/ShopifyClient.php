@@ -28,6 +28,9 @@ class ShopifyClient
     {
         $url = "https://{$this->shop->shopify_domain}/admin/api/{$this->apiVersion}/graphql.json";
 
+        // Offline tokens now expire — refresh (or migrate a legacy one) first.
+        app(ShopifyTokenService::class)->ensureFresh($this->shop);
+
         $res = Http::withHeaders([
             'X-Shopify-Access-Token' => $this->shop->access_token,
             'Content-Type' => 'application/json',

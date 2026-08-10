@@ -17,14 +17,22 @@ class MigrationController extends Controller
     {
         $shop = CurrentShop::resolve($request);
 
+        $perPage = min(50, max(5, (int) $request->query('per_page', 10)));
+
         $migrations = $shop->migrations()
             ->with('entities')
             ->latest()
-            ->paginate(20);
+            ->paginate($perPage);
 
         return response()->json([
             'data' => $migrations->getCollection()->map(fn ($m) => $this->present($m)),
-            'meta' => ['current_page' => $migrations->currentPage(), 'last_page' => $migrations->lastPage()],
+            'meta' => [
+                'current_page' => $migrations->currentPage(),
+                'last_page' => $migrations->lastPage(),
+                'per_page' => $migrations->perPage(),
+                'total' => $migrations->total(),
+                'has_more' => $migrations->hasMorePages(),
+            ],
         ]);
     }
 

@@ -1,6 +1,12 @@
 <?php
 
+use App\Http\Controllers\Admin\AdminAuthController;
+use App\Http\Controllers\Admin\AdminContentController;
+use App\Http\Controllers\Admin\AdminMigrationController;
+use App\Http\Controllers\Admin\AdminStoreController;
+use App\Http\Controllers\Admin\AdminTicketController;
 use App\Http\Controllers\Auth\ShopifyOAuthController;
+use App\Http\Controllers\DashboardContentController;
 use App\Http\Controllers\MigrationController;
 use App\Http\Controllers\ShopController;
 use App\Http\Controllers\WebhookController;
@@ -28,6 +34,11 @@ Route::middleware('shopify.session')->group(function () {
         Route::get('/preview', [WooCommerceController::class, 'preview']);
     });
 
+    // Admin-managed content shown in the merchant dashboard + support tickets.
+    Route::get('/content', [DashboardContentController::class, 'index']);
+    Route::post('/support/tickets', [DashboardContentController::class, 'createTicket']);
+    Route::get('/support/tickets', [DashboardContentController::class, 'myTickets']);
+
     Route::prefix('migrations')->group(function () {
         Route::get('/', [MigrationController::class, 'index']);
         Route::post('/', [MigrationController::class, 'store']);
@@ -36,5 +47,42 @@ Route::middleware('shopify.session')->group(function () {
         Route::get('/{id}/download', [MigrationController::class, 'download']);
         Route::post('/{id}/cancel', [MigrationController::class, 'cancel']);
         Route::post('/{id}/retry-failed', [MigrationController::class, 'retryFailed']);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Super Admin API — separate bearer-token auth, never Shopify session tokens.
+// ---------------------------------------------------------------------------
+Route::prefix('admin')->group(function () {
+    Route::post('/login', [AdminAuthController::class, 'login']);
+
+    Route::middleware('admin.auth')->group(function () {
+        Route::get('/me', [AdminAuthController::class, 'me']);
+        Route::post('/logout', [AdminAuthController::class, 'logout']);
+
+        Route::get('/overview', [AdminStoreController::class, 'overview']);
+
+        // Stores & plans
+        Route::get('/stores', [AdminStoreController::class, 'index']);
+        Route::get('/stores/{id}', [AdminStoreController::class, 'show']);
+        Route::get('/plans', [AdminContentController::class, 'plans']);
+
+        // Migrations & error logs
+        Route::get('/migrations', [AdminMigrationController::class, 'index']);
+        Route::get('/migrations/{id}', [AdminMigrationController::class, 'show']);
+        Route::get('/errors', [AdminMigrationController::class, 'errors']);
+
+        // Support tickets
+        Route::get('/tickets', [AdminTicketController::class, 'index']);
+        Route::get('/tickets/{id}', [AdminTicketController::class, 'show']);
+        Route::post('/tickets/{id}/reply', [AdminTicketController::class, 'reply']);
+        Route::patch('/tickets/{id}', [AdminTicketController::class, 'update']);
+
+        // Dashboard content management
+        Route::get('/content', [AdminContentController::class, 'index']);
+        Route::post('/content', [AdminContentController::class, 'store']);
+        Route::patch('/content/{id}', [AdminContentController::class, 'update']);
+        Route::delete('/content/{id}', [AdminContentController::class, 'destroy']);
+        Route::post('/content/reorder', [AdminContentController::class, 'reorder']);
     });
 });

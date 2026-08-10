@@ -111,6 +111,35 @@ export interface Migration {
   created_at: string;
 }
 
+export interface ContentItem {
+  id: number;
+  type: string;
+  title: string;
+  body: string | null;
+  url: string | null;
+}
+
+export interface MerchantTicket {
+  id: number;
+  subject: string;
+  status: string;
+  created_at: string;
+  replies: {
+    author_type: string;
+    author_name: string | null;
+    message: string;
+    created_at: string;
+  }[];
+}
+
+export interface PageMeta {
+  current_page: number;
+  last_page: number;
+  per_page: number;
+  total: number;
+  has_more: boolean;
+}
+
 export interface MigrationItem {
   id: number;
   entity_type: string;
@@ -131,7 +160,10 @@ export const api = {
 
   preview: () => request<{ counts: EntityCount[] }>("/woocommerce/preview"),
 
-  listMigrations: () => request<{ data: Migration[] }>("/migrations"),
+  listMigrations: (page = 1, perPage = 10) =>
+    request<{ data: Migration[]; meta: PageMeta }>(
+      `/migrations?page=${page}&per_page=${perPage}`,
+    ),
 
   createMigration: (opts: {
     entities: string[];
@@ -148,6 +180,25 @@ export const api = {
         name: opts.name ?? "",
       }),
     }),
+
+  // Admin-managed dashboard content (videos, links, resources).
+  // no-store: admin edits must show up on the next load, never from cache.
+  content: () =>
+    request<{ data: ContentItem[]; grouped: Record<string, ContentItem[]> }>("/content", {
+      cache: "no-store",
+    }),
+
+  createTicket: (data: {
+    subject: string;
+    message: string;
+    contact_email?: string;
+    migration_id?: number;
+  }) => request<{ id: number; status: string }>("/support/tickets", {
+    method: "POST",
+    body: JSON.stringify(data),
+  }),
+
+  myTickets: () => request<{ data: MerchantTicket[] }>("/support/tickets"),
 
   // Fetches the log WITH the shop header (a plain new-tab open would drop it and
   // resolve the wrong tenant -> 404), then triggers a browser download.

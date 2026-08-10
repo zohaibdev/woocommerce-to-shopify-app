@@ -43,6 +43,8 @@ return [
         // Public base URL of this app (the tunnel URL in dev). Used to build the
         // OAuth redirect_uri and the post-install redirect back into the app.
         'app_url' => rtrim(env('SHOPIFY_APP_URL', env('APP_URL')), '/'),
+        // Allowed clock skew (seconds) when validating session-token exp/nbf.
+        'token_leeway' => (int) env('SHOPIFY_TOKEN_LEEWAY', 60),
     ],
 
 ];

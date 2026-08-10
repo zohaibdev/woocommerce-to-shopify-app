@@ -4,11 +4,13 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Models\Shop;
+use App\Services\ShopifyClient;
 use App\Services\ShopifyOAuth;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class ShopifyOAuthController extends Controller
@@ -34,6 +36,7 @@ class ShopifyOAuthController extends Controller
             && $existing->access_token
             && ! $existing->uninstalled_at
             && $this->hasAllRequiredScopes($existing->scopes)
+            && $this->tokenStillWorks($existing)
         ) {
             // Forward the full query (shop, host, embedded) so App Bridge can
             // initialise when the admin loads the app inside its iframe.
@@ -53,6 +56,34 @@ class ShopifyOAuthController extends Controller
     private function hasAllRequiredScopes(?string $grantedScopes): bool
     {
         return empty(ShopifyOAuth::missingScopes($grantedScopes));
+    }
+
+    /**
+     * Confirm the stored token still works before skipping the consent screen.
+     *
+     * Local state can be stale: if the merchant uninstalls while our
+     * app/uninstalled webhook can't be delivered (common in dev, where the
+     * tunnel URL rotates), we'd otherwise bounce them into a broken app instead
+     * of re-installing. On failure we clear the dead token so OAuth runs.
+     */
+    private function tokenStillWorks(Shop $shop): bool
+    {
+        try {
+            $body = (new ShopifyClient($shop))->graphql('{ shop { name } }');
+
+            if (data_get($body, 'data.shop.name')) {
+                return true;
+            }
+        } catch (\Throwable $e) {
+            Log::info('Stored Shopify token no longer valid; re-running OAuth', [
+                'shop' => $shop->shopify_domain,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        $shop->forceFill(['access_token' => null, 'refresh_token' => null])->save();
+
+        return false;
     }
 
     /**
@@ -76,11 +107,14 @@ class ShopifyOAuthController extends Controller
         abort_unless($expectedState && hash_equals($expectedState, (string) $state), 403, 'Invalid OAuth state');
         abort_unless($code, 400, 'Missing authorization code');
 
-        // Exchange the temporary code for a permanent access token.
+        // Exchange the temporary code for an EXPIRING offline access token.
+        // `expiring=1` is required — permanent offline tokens are deprecated and
+        // can no longer be used for API calls.
         $res = Http::asJson()->post("https://{$shop}/admin/oauth/access_token", [
             'client_id' => ShopifyOAuth::apiKey(),
             'client_secret' => ShopifyOAuth::apiSecret(),
             'code' => $code,
+            'expiring' => '1',
         ]);
 
         abort_unless($res->successful(), 502, 'Token exchange failed');
@@ -93,7 +127,14 @@ class ShopifyOAuthController extends Controller
             ['shopify_domain' => $shop],
             [
                 'access_token' => $accessToken, // encrypted cast on the model
+                'refresh_token' => $res->json('refresh_token'),
                 'scopes' => $scopes,
+                'token_expires_at' => $res->json('expires_in')
+                    ? now()->addSeconds((int) $res->json('expires_in'))
+                    : null,
+                'refresh_token_expires_at' => $res->json('refresh_token_expires_in')
+                    ? now()->addSeconds((int) $res->json('refresh_token_expires_in'))
+                    : null,
                 'installed_at' => now(),
                 'uninstalled_at' => null,
             ],

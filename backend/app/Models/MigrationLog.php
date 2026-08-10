@@ -22,4 +22,9 @@ class MigrationLog extends Model
     {
         return $this->belongsTo(StoreMigration::class, 'migration_id');
     }
+
+    public function scopeErrors($q)
+    {
+        return $q->where('level', 'error');
+    }
 }
