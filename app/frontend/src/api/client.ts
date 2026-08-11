@@ -2,7 +2,10 @@
 // In the embedded app, attach the Shopify session token to every request
 // (via App Bridge getSessionToken). For local dev we fall back to no auth.
 
-const BASE_URL = import.meta.env.VITE_API_URL ?? "/api";
+// Derived from the deploy base ("/app/" in production, "/" in dev) so the API
+// lives alongside the app: /app/api in production, /api locally.
+const BASE_URL =
+  import.meta.env.VITE_API_URL ?? `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api`;
 
 // After OAuth the app is loaded at /?shop=xxx.myshopify.com. Persist that shop
 // so subsequent API calls target the correct tenant. In a fully embedded app

@@ -4,6 +4,9 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // In production the app is served from https://<domain>/app/ (the landing
+  // page owns the root). Dev still runs at "/".
+  base: process.env.NODE_ENV === "production" ? "/app/" : "/",
   server: {
     port: 5173,
     // Allow the public tunnel hostname (cloudflared/ngrok) to reach the dev server.

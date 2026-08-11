@@ -1,7 +1,9 @@
 // Super Admin API client. Uses its own bearer token (localStorage), entirely
 // separate from the merchant app's Shopify session-token auth.
 
-const BASE = (import.meta.env.VITE_API_URL ?? "/api") + "/admin";
+const BASE =
+  (import.meta.env.VITE_API_URL ??
+    `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api`) + "/admin";
 const TOKEN_KEY = "store_shift_admin_token";
 
 export const adminToken = {
