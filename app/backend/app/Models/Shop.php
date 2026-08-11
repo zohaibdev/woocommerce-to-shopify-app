@@ -69,4 +69,46 @@ class Shop extends Model
     {
         return $this->hasMany(SupportTicket::class);
     }
+
+    /**
+     * The shop's effective plan. Every shop always has one — with no paid
+     * subscription they fall back to the free Starter plan.
+     */
+    public function currentPlan(): ?Plan
+    {
+        $subscribed = $this->activeSubscription()->with('plan')->first()?->plan;
+
+        return $subscribed ?: Plan::where('code', 'starter')->first();
+    }
+
+    /**
+     * Limit for one entity: an int cap, or null for unlimited.
+     * Unknown entities are unlimited (they aren't metered).
+     */
+    public function limitFor(string $entityType): ?int
+    {
+        $key = match ($entityType) {
+            'product', 'variation', 'media' => 'products',
+            'customer' => 'customers',
+            'order' => 'orders',
+            default => null,
+        };
+
+        if ($key === null) {
+            return null;
+        }
+
+        $limits = $this->currentPlan()?->limits ?? [];
+
+        // Missing key => unmetered; explicit null => unlimited.
+        return array_key_exists($key, $limits) ? $limits[$key] : null;
+    }
+
+    /** Whether the plan allows a feature flag such as "metafields". */
+    public function planAllows(string $feature): bool
+    {
+        $limits = $this->currentPlan()?->limits ?? [];
+
+        return (bool) ($limits[$feature] ?? true);
+    }
 }

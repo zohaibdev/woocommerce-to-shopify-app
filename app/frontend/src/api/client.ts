@@ -135,6 +135,28 @@ export interface MerchantTicket {
   }[];
 }
 
+export interface PlanLimits {
+  products?: number | null;
+  customers?: number | null;
+  orders?: number | null;
+  metafields?: boolean;
+}
+
+export interface BillingPlan {
+  code: string;
+  name: string;
+  price: number;
+  interval: string;
+  limits: PlanLimits;
+  is_current: boolean;
+}
+
+export interface BillingInfo {
+  current_plan: { code: string; name: string; price: number; limits: PlanLimits } | null;
+  subscription_status: string | null;
+  plans: BillingPlan[];
+}
+
 export interface PageMeta {
   current_page: number;
   last_page: number;
@@ -183,6 +205,17 @@ export const api = {
         name: opts.name ?? "",
       }),
     }),
+
+  // --- Billing ---
+  billing: () => request<BillingInfo>("/billing", { cache: "no-store" }),
+
+  subscribe: (plan: string) =>
+    request<{ confirmation_url: string | null; plan: string }>("/billing/subscribe", {
+      method: "POST",
+      body: JSON.stringify({ plan }),
+    }),
+
+  cancelPlan: () => request<BillingInfo>("/billing/cancel", { method: "POST" }),
 
   // Admin-managed dashboard content (videos, links, resources).
   // no-store: admin edits must show up on the next load, never from cache.

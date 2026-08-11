@@ -5,6 +5,7 @@ import {
   StoreIcon,
   SettingsIcon,
   QuestionCircleIcon,
+  CreditCardIcon,
 } from "@shopify/polaris-icons";
 import { Routes, Route, useNavigate, useLocation } from "react-router-dom";
 import Dashboard from "./pages/Dashboard";
@@ -15,6 +16,7 @@ import MigrationDetails from "./pages/MigrationDetails";
 import Settings from "./pages/Settings";
 import Support from "./pages/Support";
 import InstallPrompt from "./pages/InstallPrompt";
+import Pricing from "./pages/Pricing";
 import { loadSettings } from "./settings";
 import AdminApp from "./admin/AdminApp";
 
@@ -68,6 +70,12 @@ function App() {
             selected: location.pathname === "/woocommerce",
           },
           {
+            label: "Plans & pricing",
+            icon: CreditCardIcon,
+            onClick: () => navigate("/pricing"),
+            selected: location.pathname === "/pricing",
+          },
+          {
             label: "Support",
             icon: QuestionCircleIcon,
             onClick: () => navigate("/support"),
@@ -94,6 +102,7 @@ function App() {
         <Route path="/migrations/:id" element={<MigrationDetails />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/support" element={<Support />} />
+        <Route path="/pricing" element={<Pricing />} />
       </Routes>
 
       <FooterHelp>

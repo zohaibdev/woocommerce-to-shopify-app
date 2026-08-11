@@ -148,13 +148,20 @@ export interface Content {
   enabled: boolean;
 }
 
+export interface PlanLimits {
+  products: number | null;
+  customers: number | null;
+  orders: number | null;
+  metafields: boolean;
+}
+
 export interface Plan {
   id: number;
   code: string;
   name: string;
-  price: string;
+  price: number;
   interval: string;
-  limits: Record<string, number | null> | null;
+  limits: PlanLimits;
   active: boolean;
   active_subscriptions: number;
 }
@@ -176,7 +183,12 @@ export const adminApi = {
       `/stores?page=${page}&search=${encodeURIComponent(search)}`,
     ),
   store: (id: number) => request<any>(`/stores/${id}`),
-  plans: () => request<Plan[]>("/plans"),
+  plans: () => request<{ data: Plan[] }>("/plans"),
+  createPlan: (data: Partial<Plan>) =>
+    request<Plan>("/plans", { method: "POST", body: JSON.stringify(data) }),
+  updatePlan: (id: number, data: Partial<Plan>) =>
+    request<Plan>(`/plans/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deletePlan: (id: number) => request<{ ok: boolean }>(`/plans/${id}`, { method: "DELETE" }),
 
   migrations: (page = 1, params: { shop_id?: number; status?: string } = {}) => {
     const q = new URLSearchParams({ page: String(page), ...(params as any) });

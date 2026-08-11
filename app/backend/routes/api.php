@@ -3,9 +3,11 @@
 use App\Http\Controllers\Admin\AdminAuthController;
 use App\Http\Controllers\Admin\AdminContentController;
 use App\Http\Controllers\Admin\AdminMigrationController;
+use App\Http\Controllers\Admin\AdminPlanController;
 use App\Http\Controllers\Admin\AdminStoreController;
 use App\Http\Controllers\Admin\AdminTicketController;
 use App\Http\Controllers\Auth\ShopifyOAuthController;
+use App\Http\Controllers\BillingController;
 use App\Http\Controllers\DashboardContentController;
 use App\Http\Controllers\MigrationController;
 use App\Http\Controllers\ShopController;
@@ -16,6 +18,9 @@ use Illuminate\Support\Facades\Route;
 // --- Shopify OAuth (install flow) ---
 Route::get('/auth', [ShopifyOAuthController::class, 'begin']);
 Route::get('/auth/callback', [ShopifyOAuthController::class, 'callback']);
+
+// --- Billing callback (Shopify redirects the merchant here) ---
+Route::get('/billing/callback', [BillingController::class, 'callback']);
 
 // --- Shopify webhooks (HMAC-verified inside the controller) ---
 Route::post('/webhooks/app-uninstalled', [WebhookController::class, 'appUninstalled']);
@@ -35,6 +40,10 @@ Route::middleware('shopify.session')->group(function () {
     });
 
     // Admin-managed content shown in the merchant dashboard + support tickets.
+    Route::get('/billing', [BillingController::class, 'index']);
+    Route::post('/billing/subscribe', [BillingController::class, 'subscribe']);
+    Route::post('/billing/cancel', [BillingController::class, 'cancel']);
+
     Route::get('/content', [DashboardContentController::class, 'index']);
     Route::post('/support/tickets', [DashboardContentController::class, 'createTicket']);
     Route::get('/support/tickets', [DashboardContentController::class, 'myTickets']);
@@ -65,7 +74,10 @@ Route::prefix('admin')->group(function () {
         // Stores & plans
         Route::get('/stores', [AdminStoreController::class, 'index']);
         Route::get('/stores/{id}', [AdminStoreController::class, 'show']);
-        Route::get('/plans', [AdminContentController::class, 'plans']);
+        Route::get('/plans', [AdminPlanController::class, 'index']);
+        Route::post('/plans', [AdminPlanController::class, 'store']);
+        Route::patch('/plans/{id}', [AdminPlanController::class, 'update']);
+        Route::delete('/plans/{id}', [AdminPlanController::class, 'destroy']);
 
         // Migrations & error logs
         Route::get('/migrations', [AdminMigrationController::class, 'index']);

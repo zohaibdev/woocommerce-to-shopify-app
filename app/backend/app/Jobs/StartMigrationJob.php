@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Migration\MigratorRegistry;
 use App\Models\MigrationBatch;
 use App\Models\MigrationEntity;
+use App\Models\MigrationLog;
 use App\Models\StoreMigration;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -41,9 +42,27 @@ class StartMigrationJob implements ShouldQueue
         $ordered = $registry->order($migration->selected_entities);
         $chain = [];
 
+        $shop = $migration->shop;
+
         foreach ($ordered as $entityType) {
             $migrator = $registry->make($entityType);
-            $total = $migrator->count($migration->connection);
+            $available = $migrator->count($migration->connection);
+
+            // Plan limits: null = unlimited, 0 = feature not included.
+            $limit = $shop->limitFor($entityType);
+            $total = $limit === null ? $available : min($available, $limit);
+
+            if ($limit !== null && $available > $limit) {
+                MigrationLog::create([
+                    'migration_id' => $migration->id,
+                    'level' => 'warning',
+                    'entity_type' => $entityType,
+                    'message' => $limit === 0
+                        ? "{$entityType} is not included in the ".($shop->currentPlan()?->name ?? 'current')." plan — skipped."
+                        : "Plan limit reached: migrating {$limit} of {$available} {$entityType} records. Upgrade to migrate the rest.",
+                    'created_at' => now(),
+                ]);
+            }
 
             MigrationEntity::updateOrCreate(
                 ['migration_id' => $migration->id, 'entity_type' => $entityType],

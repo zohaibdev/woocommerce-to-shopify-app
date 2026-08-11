@@ -45,6 +45,8 @@ return [
         'app_url' => rtrim(env('SHOPIFY_APP_URL', env('APP_URL')), '/'),
         // Allowed clock skew (seconds) when validating session-token exp/nbf.
         'token_leeway' => (int) env('SHOPIFY_TOKEN_LEEWAY', 60),
+        // Test charges: merchants are never billed. Keep true until the app is live.
+        'billing_test' => (bool) env('SHOPIFY_BILLING_TEST', true),
     ],
 
 ];
