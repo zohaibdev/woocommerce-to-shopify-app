@@ -14,8 +14,20 @@ import MigrationHistory from "./pages/MigrationHistory";
 import MigrationDetails from "./pages/MigrationDetails";
 import Settings from "./pages/Settings";
 import Support from "./pages/Support";
+import InstallPrompt from "./pages/InstallPrompt";
 import { loadSettings } from "./settings";
 import AdminApp from "./admin/AdminApp";
+
+/**
+ * True when the app was opened with Shopify context — embedded in the admin
+ * (`host`), straight after OAuth (`shop`), or by a merchant who has used it
+ * before (remembered shop). Without it every API call 401s, so we show the
+ * install prompt instead of a dashboard that cannot load.
+ */
+function hasShopContext(): boolean {
+  const q = new URLSearchParams(window.location.search);
+  return q.has("host") || q.has("shop") || !!localStorage.getItem("shop_domain");
+}
 
 function App() {
   const navigate = useNavigate();
@@ -25,6 +37,12 @@ function App() {
   // The Super Admin dashboard is a separate surface with its own auth and chrome.
   if (location.pathname.startsWith("/admin")) {
     return <AdminApp />;
+  }
+
+  // Opened directly (not from Shopify) — offer installation instead of a
+  // dashboard that would just render a 401.
+  if (!hasShopContext()) {
+    return <InstallPrompt />;
   }
 
   const navMarkup = (

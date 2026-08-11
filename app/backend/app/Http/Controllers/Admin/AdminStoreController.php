@@ -13,10 +13,47 @@ use Illuminate\Http\Request;
 
 class AdminStoreController extends Controller
 {
+    /**
+     * Queue health. Migrations only advance while a worker is consuming jobs,
+     * so this is the first thing to check when progress looks stuck.
+     */
+    private function queueHealth(): array
+    {
+        $pending = 0;
+        $failed = 0;
+        $oldestSeconds = null;
+
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('jobs')) {
+                $pending = \Illuminate\Support\Facades\DB::table('jobs')->count();
+                $oldest = \Illuminate\Support\Facades\DB::table('jobs')->min('available_at');
+                if ($oldest) {
+                    $oldestSeconds = max(0, time() - (int) $oldest);
+                }
+            }
+            if (\Illuminate\Support\Facades\Schema::hasTable('failed_jobs')) {
+                $failed = \Illuminate\Support\Facades\DB::table('failed_jobs')->count();
+            }
+        } catch (\Throwable $e) {
+            // Non-database queue driver — counts aren't readable this way.
+        }
+
+        // A job waiting over ~2 minutes means nothing is consuming the queue.
+        $stalled = $pending > 0 && $oldestSeconds !== null && $oldestSeconds > 120;
+
+        return [
+            'pending_jobs' => $pending,
+            'failed_jobs' => $failed,
+            'oldest_pending_seconds' => $oldestSeconds,
+            'worker_stalled' => $stalled,
+        ];
+    }
+
     /** Overview counters for the admin home. */
     public function overview(): JsonResponse
     {
         return response()->json([
+            'queue' => $this->queueHealth(),
             'stores' => Shop::whereNull('uninstalled_at')->count(),
             'stores_uninstalled' => Shop::whereNotNull('uninstalled_at')->count(),
             'migrations' => StoreMigration::count(),

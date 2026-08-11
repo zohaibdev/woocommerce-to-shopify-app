@@ -54,7 +54,15 @@ export interface PageMeta {
   has_more: boolean;
 }
 
+export interface QueueHealth {
+  pending_jobs: number;
+  failed_jobs: number;
+  oldest_pending_seconds: number | null;
+  worker_stalled: boolean;
+}
+
 export interface Overview {
+  queue: QueueHealth;
   stores: number;
   stores_uninstalled: number;
   migrations: number;

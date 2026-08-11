@@ -150,23 +150,16 @@ class ShopifyOAuthController extends Controller
     }
 
     /** Register the mandatory app/uninstalled webhook (best-effort). */
+    /**
+     * Reconcile webhook subscriptions against the current app URL.
+     * Never fails the install — problems are logged by the registrar.
+     */
     private function registerWebhooks(Shop $shop): void
     {
-        $version = config('services.shopify.api_version');
-        $callback = ShopifyOAuth::appUrl() . '/api/webhooks/app-uninstalled';
-
         try {
-            Http::withHeaders(['X-Shopify-Access-Token' => $shop->access_token])
-                ->asJson()
-                ->post("https://{$shop->shopify_domain}/admin/api/{$version}/webhooks.json", [
-                    'webhook' => [
-                        'topic' => 'app/uninstalled',
-                        'address' => $callback,
-                        'format' => 'json',
-                    ],
-                ]);
+            app(\App\Services\ShopifyWebhookRegistrar::class)->sync($shop);
         } catch (\Throwable $e) {
-            report($e); // don't fail the install if webhook registration hiccups
+            report($e);
         }
     }
 }
