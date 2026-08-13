@@ -35,6 +35,12 @@ class CustomerMigrator extends AbstractMigrator
         return (new WooCommerceClient($connection))->total('customers');
     }
 
+    /** Source resource for retry-by-id (see AbstractMigrator::fetchByIds). */
+    protected function wooSource(): ?array
+    {
+        return ['customers', []];
+    }
+
     public function fetchBatch(WoocommerceConnection $connection, int $page, int $perPage): array
     {
         return (new WooCommerceClient($connection))->list('customers', $page, $perPage);

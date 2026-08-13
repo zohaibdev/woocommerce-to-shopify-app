@@ -49,4 +49,10 @@ return [
         'billing_test' => (bool) env('SHOPIFY_BILLING_TEST', true),
     ],
 
+    'support' => [
+        // Where new support tickets are emailed. Comma-separated for several
+        // inboxes. Blank => every super admin account gets them.
+        'admin_email' => env('SUPPORT_ADMIN_EMAIL'),
+    ],
+
 ];

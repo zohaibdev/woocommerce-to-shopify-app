@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\SupportTicket;
 use App\Models\TicketReply;
+use App\Services\SupportNotifier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -63,7 +64,7 @@ class AdminTicketController extends Controller
         $ticket = SupportTicket::findOrFail($id);
         $admin = $request->attributes->get('admin');
 
-        TicketReply::create([
+        $reply = TicketReply::create([
             'support_ticket_id' => $ticket->id,
             'author_type' => 'admin',
             'author_name' => $admin->name,
@@ -74,6 +75,10 @@ class AdminTicketController extends Controller
             'status' => $data['status'] ?? 'pending',
             'last_reply_at' => now(),
         ]);
+
+        // The merchant is inside Shopify admin and won't see this unless we tell
+        // them. Mail failures are logged, never fatal — the reply is saved.
+        app(SupportNotifier::class)->replied($ticket->fresh(), $reply);
 
         return $this->show($ticket->id);
     }

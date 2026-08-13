@@ -27,7 +27,9 @@ class ShopController extends Controller
             'missing_scopes' => $missingScopes,
             // Only prompt to update once the app is actually installed.
             'needs_scope_update' => $shop->access_token && ! empty($missingScopes),
-            'reauth_url' => ShopifyOAuth::appUrl() . '/api/auth?shop=' . urlencode($shop->shopify_domain),
+            // force=1 makes /api/auth always run the consent flow instead of
+            // short-circuiting back into the app when the install already looks fine.
+            'reauth_url' => ShopifyOAuth::appUrl() . '/api/auth?force=1&shop=' . urlencode($shop->shopify_domain),
         ]);
     }
 }

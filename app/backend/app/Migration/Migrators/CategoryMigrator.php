@@ -48,6 +48,12 @@ class CategoryMigrator extends AbstractMigrator
         return (new WooCommerceClient($connection))->total('products/categories');
     }
 
+    /** Source resource for retry-by-id (see AbstractMigrator::fetchByIds). */
+    protected function wooSource(): ?array
+    {
+        return ['products/categories', []];
+    }
+
     public function fetchBatch(WoocommerceConnection $connection, int $page, int $perPage): array
     {
         return (new WooCommerceClient($connection))->list('products/categories', $page, $perPage);

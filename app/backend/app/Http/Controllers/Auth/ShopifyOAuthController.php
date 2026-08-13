@@ -27,12 +27,18 @@ class ShopifyOAuthController extends Controller
 
         abort_unless(ShopifyOAuth::isValidShopDomain($shop), 400, 'Invalid shop domain');
 
+        // "Re-authorize app" in Settings sends force=1. Without it this shortcut
+        // saw a healthy install, bounced the merchant straight back to /app/, and
+        // the button looked broken — it never reached Shopify's consent screen.
+        $force = $request->boolean('force');
+
         // Already installed AND all required scopes granted? Go straight into the app.
         // If required scopes are missing (e.g. we added write_orders), fall through
         // to OAuth so the merchant re-consents and the token is upgraded.
         $existing = Shop::where('shopify_domain', $shop)->first();
         if (
-            $existing
+            ! $force
+            && $existing
             && $existing->access_token
             && ! $existing->uninstalled_at
             && $this->hasAllRequiredScopes($existing->scopes)

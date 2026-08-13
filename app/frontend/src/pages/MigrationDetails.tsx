@@ -24,6 +24,7 @@ export default function MigrationDetails() {
   const [migration, setMigration] = useState<Migration | null>(null);
   const [failedItems, setFailedItems] = useState<MigrationItem[]>([]);
   const [logs, setLogs] = useState<MigrationLogEntry[]>([]);
+  const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const timer = useRef<number | null>(null);
 
@@ -61,10 +62,23 @@ export default function MigrationDetails() {
     load();
   };
   const retry = async () => {
-    await api.retryFailed(migrationId);
-    setFailedItems([]);
-    timer.current = window.setInterval(load, 3000);
-    load();
+    setRetrying(true);
+    setError(null);
+    try {
+      const updated = await api.retryFailed(migrationId);
+      setMigration(updated);
+      setFailedItems([]);
+
+      // Restart polling — but clear the old timer first, or every retry leaves
+      // another interval running against the same endpoint.
+      if (timer.current) window.clearInterval(timer.current);
+      timer.current = window.setInterval(load, 3000);
+      load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRetrying(false);
+    }
   };
 
   if (!migration) {
@@ -185,7 +199,9 @@ export default function MigrationDetails() {
                 <Text as="h2" variant="headingMd">
                   Failed items ({failedItems.length})
                 </Text>
-                <Button onClick={retry}>Retry failed items</Button>
+                <Button onClick={retry} loading={retrying}>
+                  Retry failed items
+                </Button>
               </InlineStack>
               <DataTable
                 columnContentTypes={["text", "numeric", "text"]}

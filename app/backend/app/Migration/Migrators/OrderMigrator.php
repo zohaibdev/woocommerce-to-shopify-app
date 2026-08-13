@@ -45,6 +45,12 @@ class OrderMigrator extends AbstractMigrator
         return (new WooCommerceClient($connection))->total('orders', ['status' => 'any']);
     }
 
+    /** Source resource for retry-by-id (see AbstractMigrator::fetchByIds). */
+    protected function wooSource(): ?array
+    {
+        return ['orders', ['status' => 'any']];
+    }
+
     public function fetchBatch(WoocommerceConnection $connection, int $page, int $perPage): array
     {
         return (new WooCommerceClient($connection))->list('orders', $page, $perPage, ['status' => 'any']);

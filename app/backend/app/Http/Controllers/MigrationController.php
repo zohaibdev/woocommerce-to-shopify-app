@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Jobs\RetryFailedItemsJob;
 use App\Jobs\StartMigrationJob;
+use App\Migration\MigrationRunner;
 use App\Migration\MigratorRegistry;
 use App\Models\MigrationEntity;
 use App\Models\MigrationItem;
@@ -181,6 +182,19 @@ class MigrationController extends Controller
     public function retryFailed(Request $request, int $id): JsonResponse
     {
         $migration = $this->find($request, $id);
+
+        $hasFailures = MigrationItem::where('migration_id', $migration->id)
+            ->where('status', 'failed')
+            ->exists();
+
+        abort_unless($hasFailures, 422, 'There are no failed items to retry.');
+
+        // Flip to processing HERE, not inside the job. The response is what the
+        // page reads, and a terminal status told it to stop polling — so the retry
+        // looked like it did nothing until the queue happened to pick the job up.
+        $migration->update(['status' => 'processing', 'completed_at' => null]);
+
+        MigrationRunner::log($migration->id, 'info', null, 'Retrying failed items…');
 
         RetryFailedItemsJob::dispatch($migration->id);
 

@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\DashboardContent;
 use App\Models\SupportTicket;
+use App\Services\SupportNotifier;
 use App\Support\CurrentShop;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -53,6 +54,10 @@ class DashboardContentController extends Controller
             'status' => 'open',
             'priority' => 'normal',
         ]);
+
+        // Tell the admins it exists and confirm receipt to the merchant. Never
+        // lets a mail problem fail the request — the ticket is already saved.
+        app(SupportNotifier::class)->ticketOpened($ticket);
 
         return response()->json(['id' => $ticket->id, 'status' => $ticket->status], 201);
     }

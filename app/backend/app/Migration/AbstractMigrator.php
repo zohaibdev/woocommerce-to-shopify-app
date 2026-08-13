@@ -5,6 +5,7 @@ namespace App\Migration;
 use App\Migration\Contracts\Migrator;
 use App\Models\MigrationItem;
 use App\Models\StoreMigration;
+use App\Models\WoocommerceConnection;
 use App\Services\ShopifyClient;
 use App\Services\WooCommerceClient;
 
@@ -25,6 +26,36 @@ abstract class AbstractMigrator implements Migrator
     public function dependsOn(): array
     {
         return [];
+    }
+
+    /**
+     * The WooCommerce REST resource this migrator reads, plus any query it always
+     * needs. Migrators that have no source of their own (the inline no-ops) return
+     * null and are simply not retryable by id.
+     *
+     * @return array{0: string, 1: array}|null [resource, query]
+     */
+    protected function wooSource(): ?array
+    {
+        return null;
+    }
+
+    public function fetchByIds(WoocommerceConnection $connection, array $ids): array
+    {
+        $source = $this->wooSource();
+
+        if ($source === null || empty($ids)) {
+            return [];
+        }
+
+        [$resource, $query] = $source;
+
+        return (new WooCommerceClient($connection))->list(
+            $resource,
+            1,
+            max(1, count($ids)),
+            $query + ['include' => implode(',', array_map('intval', $ids))],
+        );
     }
 
     public function sourceId(array $wooItem): int

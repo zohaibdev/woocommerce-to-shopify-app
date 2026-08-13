@@ -17,6 +17,15 @@ interface Migrator
     /** Fetch a page of source items from WooCommerce (paginated). */
     public function fetchBatch(WoocommerceConnection $connection, int $page, int $perPage): array;
 
+    /**
+     * Fetch specific source items by WooCommerce id. Used by "retry failed items"
+     * so a retry costs one request for the handful that failed, instead of a full
+     * re-run of the whole entity.
+     *
+     * @param  array<int, int>  $ids
+     */
+    public function fetchByIds(WoocommerceConnection $connection, array $ids): array;
+
     /** Transform + create/update a single item in Shopify. Must be idempotent. */
     public function migrateItem(StoreMigration $migration, array $wooItem): MigrationItemResult;
 

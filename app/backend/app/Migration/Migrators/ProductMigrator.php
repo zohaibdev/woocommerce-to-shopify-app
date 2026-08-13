@@ -71,6 +71,12 @@ class ProductMigrator extends AbstractMigrator
         return (new WooCommerceClient($connection))->total('products');
     }
 
+    /** Source resource for retry-by-id (see AbstractMigrator::fetchByIds). */
+    protected function wooSource(): ?array
+    {
+        return ['products', ['status' => 'any']];
+    }
+
     public function fetchBatch(WoocommerceConnection $connection, int $page, int $perPage): array
     {
         return (new WooCommerceClient($connection))
