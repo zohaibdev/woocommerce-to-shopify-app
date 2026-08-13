@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Frame, Navigation, FooterHelp, Link, BlockStack, InlineStack, Text, Box } from "@shopify/polaris";
 import {
   HomeIcon,
@@ -35,6 +36,16 @@ function App() {
   const navigate = useNavigate();
   const location = useLocation();
   const prefs = loadSettings();
+
+  // Shopify returns the merchant to the app root after a charge is approved or
+  // declined, but only the Pricing page knows what `?billing=` means — so the
+  // outcome was never shown. Take them there, keeping the flag.
+  useEffect(() => {
+    const billing = new URLSearchParams(location.search).get("billing");
+    if (billing && location.pathname !== "/pricing") {
+      navigate(`/pricing${location.search}`, { replace: true });
+    }
+  }, [location.pathname, location.search, navigate]);
 
   // The Super Admin dashboard is a separate surface with its own auth and chrome.
   if (location.pathname.startsWith("/admin")) {

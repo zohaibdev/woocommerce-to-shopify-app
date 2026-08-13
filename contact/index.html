@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Contact — Store Shift</title>
+<meta name="description" content="Get in touch with the Store Shift team about migrations, billing, privacy or anything else." />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<link rel="stylesheet" href="/site.css" />
+</head>
+<body>
+
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/"><span class="logo">⇄</span><span>Store Shift</span></a>
+    <nav class="nav-links">
+      <a href="/#features">Features</a>
+      <a href="/#pricing">Pricing</a>
+      <a href="/developers/">Docs</a>
+      <a href="/#faq">FAQ</a>
+    </nav>
+  </div>
+</header>
+
+<div class="page-head">
+  <div class="wrap">
+    <h1>Contact us</h1>
+    <p class="meta">Questions about a migration, billing, privacy — or anything else.</p>
+  </div>
+</div>
+
+<main class="prose">
+
+  <div class="note">
+    <strong>Already using the app?</strong> The fastest route is the <strong>Support</strong> page
+    inside Store Shift in your Shopify admin. Tickets opened there carry your store details and
+    migration history, so we can look at the actual run instead of asking you for it — and you can
+    reply to us right there.
+  </div>
+
+  <h2>Send us a message</h2>
+
+  <form class="form" id="contact-form" novalidate>
+    <div class="form-msg" id="msg"></div>
+
+    <div class="field">
+      <label for="name">Your name</label>
+      <input id="name" name="name" type="text" required maxlength="120" autocomplete="name" />
+    </div>
+
+    <div class="field">
+      <label for="email">Email address</label>
+      <input id="email" name="email" type="email" required maxlength="190" autocomplete="email" />
+    </div>
+
+    <div class="field">
+      <label for="shop">Shopify store domain <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+      <input id="shop" name="shop" type="text" maxlength="190" placeholder="your-store.myshopify.com" />
+    </div>
+
+    <div class="field">
+      <label for="subject">Subject</label>
+      <input id="subject" name="subject" type="text" required maxlength="200" />
+    </div>
+
+    <div class="field">
+      <label for="message">Message</label>
+      <textarea id="message" name="message" required maxlength="5000"></textarea>
+    </div>
+
+    <!-- Honeypot: hidden from people, filled in by bots. -->
+    <div style="position:absolute;left:-9999px" aria-hidden="true">
+      <label for="website">Website</label>
+      <input id="website" name="website" type="text" tabindex="-1" autocomplete="off" />
+    </div>
+
+    <div>
+      <button class="btn" type="submit" id="submit">Send message</button>
+    </div>
+  </form>
+
+  <h2>Other ways to reach us</h2>
+  <table>
+    <thead><tr><th>Topic</th><th>Where</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Support with a migration</td>
+        <td>Support page inside the app, or <a href="mailto:support@shift-shop.webnday.com">support@shift-shop.webnday.com</a></td>
+      </tr>
+      <tr>
+        <td>Billing and refunds</td>
+        <td><a href="mailto:support@shift-shop.webnday.com">support@shift-shop.webnday.com</a> — please read the <a href="/refund/">refund policy</a> first</td>
+      </tr>
+      <tr>
+        <td>Privacy, data access or deletion</td>
+        <td><a href="mailto:support@shift-shop.webnday.com">support@shift-shop.webnday.com</a> — see the <a href="/privacy/">privacy policy</a></td>
+      </tr>
+      <tr>
+        <td>Security disclosure</td>
+        <td><a href="mailto:support@shift-shop.webnday.com">support@shift-shop.webnday.com</a> — please report privately and give us time to fix it</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Response times</h2>
+  <p>
+    We answer during normal business days. Most messages get a reply within one business day; Pro and
+    Enterprise plans are prioritised. These are targets, not guarantees.
+  </p>
+
+  <h2>Before you write about a failed migration</h2>
+  <p>Including these makes it much faster for us to help:</p>
+  <ul>
+    <li>Your Shopify store domain.</li>
+    <li>The migration number (shown at the top of the migration page).</li>
+    <li>The exact error text from the <strong>Activity</strong> log or the failed-items list.</li>
+    <li>Whether your WooCommerce store is publicly reachable over HTTPS.</li>
+  </ul>
+  <p>
+    You can also download a full report of any migration from the migration page — attach it and we
+    can usually tell you what happened without any back and forth.
+  </p>
+
+</main>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div class="footer-bottom">
+      <div>© <span id="year"></span> Store Shift. All rights reserved.</div>
+      <div>
+        <a href="/privacy/">Privacy</a> ·
+        <a href="/terms/">Terms</a> ·
+        <a href="/refund/">Refunds</a> ·
+        <a href="/contact/">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+  document.getElementById('year').textContent = new Date().getFullYear();
+
+  var form = document.getElementById('contact-form');
+  var msg = document.getElementById('msg');
+  var submit = document.getElementById('submit');
+
+  function show(text, ok) {
+    msg.textContent = text;
+    msg.className = 'form-msg ' + (ok ? 'ok' : 'err');
+  }
+
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+
+    var payload = {
+      name: form.name.value.trim(),
+      email: form.email.value.trim(),
+      shop: form.shop.value.trim(),
+      subject: form.subject.value.trim(),
+      message: form.message.value.trim(),
+      website: form.website.value
+    };
+
+    if (!payload.name || !payload.email || !payload.subject || !payload.message) {
+      show('Please fill in your name, email, subject and message.', false);
+      return;
+    }
+
+    submit.disabled = true;
+    submit.textContent = 'Sending…';
+
+    try {
+      var res = await fetch('/app/api/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        form.reset();
+        show('Thanks — your message is on its way. We\'ll reply to the email address you gave.', true);
+      } else if (res.status === 429) {
+        show('Too many messages from this address. Please try again later, or email us directly.', false);
+      } else {
+        var body = await res.json().catch(function () { return {}; });
+        show(body.error || body.message || 'Something went wrong. Please email support@shift-shop.webnday.com instead.', false);
+      }
+    } catch (err) {
+      show('Could not reach the server. Please email support@shift-shop.webnday.com instead.', false);
+    } finally {
+      submit.disabled = false;
+      submit.textContent = 'Send message';
+    }
+  });
+</script>
+</body>
+</html>

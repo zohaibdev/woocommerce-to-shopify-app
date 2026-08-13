@@ -294,6 +294,12 @@ export const api = {
     return request<{ data: MigrationItem[] }>(`/migrations/${id}/items?${q}`);
   },
 
+  replyToTicket: (id: number, message: string) =>
+    request<{ author_type: string; author_name: string | null; message: string; created_at: string }>(
+      `/support/tickets/${id}/reply`,
+      { method: "POST", body: JSON.stringify({ message }) },
+    ),
+
   getLogs: (id: number, limit = 100) =>
     request<{ data: MigrationLogEntry[] }>(`/migrations/${id}/logs?limit=${limit}`, {
       cache: "no-store",

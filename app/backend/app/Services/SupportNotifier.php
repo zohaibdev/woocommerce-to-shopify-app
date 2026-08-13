@@ -33,6 +33,16 @@ class SupportNotifier
         }
     }
 
+    /** The merchant answered — the admins need to know, not the merchant. */
+    public function merchantReplied(SupportTicket $ticket, TicketReply $reply): void
+    {
+        $ticket->loadMissing('shop');
+
+        foreach ($this->adminRecipients() as $admin) {
+            $this->send($admin, new SupportTicketReplied($ticket, $reply, forAdmin: true), 'admin reply notification');
+        }
+    }
+
     public function replied(SupportTicket $ticket, TicketReply $reply): void
     {
         $to = $ticket->contact_email ?: $ticket->shop?->email;

@@ -13,8 +13,9 @@ import {
   Divider,
   FormLayout,
   SkeletonBodyText,
+  Box,
 } from "@shopify/polaris";
-import { adminApi, type MailSettings } from "../api";
+import { adminApi, type BrandingSettings, type MailSettings } from "../api";
 
 const SCHEMES = [
   { label: "TLS / STARTTLS (usually port 587)", value: "smtp" },
@@ -44,6 +45,9 @@ const toDraft = (s: MailSettings): Draft => ({
 export default function AdminSettings() {
   const [settings, setSettings] = useState<MailSettings | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [branding, setBranding] = useState<BrandingSettings | null>(null);
+  const [brandName, setBrandName] = useState("Store Shift");
+  const [brandingBusy, setBrandingBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testTo, setTestTo] = useState("");
@@ -59,9 +63,44 @@ export default function AdminSettings() {
       })
       .catch((e) => setError((e as Error).message));
 
+  const loadBranding = () =>
+    adminApi
+      .branding()
+      .then((b) => {
+        setBranding(b);
+        setBrandName(b.name);
+      })
+      .catch((e) => setError((e as Error).message));
+
   useEffect(() => {
     load();
+    loadBranding();
   }, []);
+
+  const applyBranding = async (fn: () => Promise<BrandingSettings>, done: string) => {
+    setBrandingBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const updated = await fn();
+      setBranding(updated);
+      setBrandName(updated.name);
+      setNotice(done);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBrandingBusy(false);
+    }
+  };
+
+  const uploadLogo = (logo: File) =>
+    applyBranding(() => adminApi.saveBranding({ logo }), "Email logo updated.");
+
+  const removeLogo = () =>
+    applyBranding(() => adminApi.saveBranding({ removeLogo: true }), "Email logo removed.");
+
+  const saveBrandName = () =>
+    applyBranding(() => adminApi.saveBranding({ name: brandName.trim() }), "Email name saved.");
 
   const set = (key: keyof Draft) => (value: string) =>
     setDraft((d) => (d ? { ...d, [key]: value } : d));
@@ -118,6 +157,72 @@ export default function AdminSettings() {
             {notice}
           </Banner>
         )}
+
+        <Card>
+          <BlockStack gap="400">
+            <Text as="h2" variant="headingMd">
+              Email branding
+            </Text>
+            <Text as="p" tone="subdued">
+              Shown at the top of every email the app sends. PNG, JPG or GIF up to 512&nbsp;KB — email
+              clients don't render SVG.
+            </Text>
+
+            <InlineStack gap="400" blockAlign="center" wrap={false}>
+              <Box
+                padding="300"
+                borderWidth="025"
+                borderColor="border"
+                borderRadius="200"
+                minWidth="180px"
+              >
+                {branding?.has_logo && branding.logo_url ? (
+                  <img
+                    src={branding.logo_url}
+                    alt="Email logo"
+                    style={{ maxHeight: 60, maxWidth: 200, display: "block" }}
+                  />
+                ) : (
+                  <Text as="span" tone="subdued">
+                    No logo — the name is used
+                  </Text>
+                )}
+              </Box>
+
+              <BlockStack gap="200">
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/gif"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) uploadLogo(file);
+                    e.target.value = "";
+                  }}
+                />
+                {branding?.has_logo && (
+                  <InlineStack>
+                    <Button tone="critical" variant="plain" loading={brandingBusy} onClick={removeLogo}>
+                      Remove logo
+                    </Button>
+                  </InlineStack>
+                )}
+              </BlockStack>
+            </InlineStack>
+
+            <TextField
+              label="Name shown in emails"
+              value={brandName}
+              onChange={setBrandName}
+              placeholder="Store Shift"
+              autoComplete="off"
+              connectedRight={
+                <Button loading={brandingBusy} onClick={saveBrandName}>
+                  Save
+                </Button>
+              }
+            />
+          </BlockStack>
+        </Card>
 
         <Card>
           <BlockStack gap="400">

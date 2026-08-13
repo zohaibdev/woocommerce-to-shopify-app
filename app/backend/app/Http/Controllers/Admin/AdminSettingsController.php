@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Services\Branding;
 use App\Services\MailSettings;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -38,6 +39,39 @@ class AdminSettingsController extends Controller
         ]);
 
         return response()->json(MailSettings::save($data));
+    }
+
+    /** Current email branding (logo + the name shown in emails). */
+    public function branding(): JsonResponse
+    {
+        return response()->json(Branding::current());
+    }
+
+    /**
+     * Replace the logo used at the top of every email. Stored outside the web
+     * root and streamed back by a public route, so no symlink or writable
+     * assets folder is needed on shared hosting.
+     */
+    public function updateBranding(Request $request): JsonResponse
+    {
+        $request->validate([
+            // Email clients don't render SVG — raster only.
+            'logo' => ['sometimes', 'file', 'mimes:png,jpg,jpeg,gif', 'max:512'],
+            'name' => ['sometimes', 'nullable', 'string', 'max:60'],
+            'remove_logo' => ['sometimes', 'boolean'],
+        ]);
+
+        if ($request->boolean('remove_logo')) {
+            Branding::removeLogo();
+        } elseif ($request->hasFile('logo')) {
+            Branding::storeLogo($request->file('logo'));
+        }
+
+        if ($request->has('name')) {
+            Branding::setName((string) $request->input('name'));
+        }
+
+        return response()->json(Branding::current());
     }
 
     /** Send a test message using the SAVED settings. */

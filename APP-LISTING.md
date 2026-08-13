@@ -141,8 +141,11 @@ Minimum 3, 1600 × 900 px, taken inside the Shopify admin (embedded).
 | Field | Value |
 |---|---|
 | Support email | `support@shift-shop.webnday.com` *(set this up before submitting)* |
-| Support / help URL | `https://shift-shop.webnday.com/#faq` |
-| Privacy policy URL | `https://shift-shop.webnday.com/privacy` **(required — must exist)** |
+| Support / help URL | `https://shift-shop.webnday.com/contact/` |
+| Privacy policy URL | `https://shift-shop.webnday.com/privacy/` ✅ live |
+| Terms of service URL | `https://shift-shop.webnday.com/terms/` ✅ live |
+| Refund policy URL | `https://shift-shop.webnday.com/refund/` ✅ live |
+| Documentation URL | `https://shift-shop.webnday.com/developers/` ✅ live |
 | FAQ URL | `https://shift-shop.webnday.com/#faq` |
 
 ---
@@ -338,15 +341,18 @@ see the standard Shopify approval screen.
 
 ---
 
-## Two things still missing from the product
+## Still to do before submitting
 
-Be aware these will come up in review:
+1. **Fill in the legal placeholders.** `/privacy/` and `/terms/` contain
+   `[LEGAL ENTITY NAME]`, `[REGISTERED ADDRESS]` and `[JURISDICTION]`. Shopify
+   reviewers read these pages — placeholders in a live policy look unfinished.
 
-1. **Privacy policy page** — the listing requires a working URL. There is no
-   `/privacy` page on the site yet. It must explain what data you read from
-   WooCommerce, what you store (encrypted API keys, migration mappings), and how
-   a merchant can request deletion.
+2. **Create `support@shift-shop.webnday.com`.** Every public page, both policies
+   and this listing point at it, and the reviewer may email it.
 
-2. **A public WooCommerce test store** — the reviewer has no way to test
+3. **A public WooCommerce test store** — the reviewer has no way to test
    otherwise. A cheap shared-host WordPress with the WooCommerce sample data
    import is enough.
+
+4. **Protected Customer Data approval** — customers and orders fail until it is
+   granted.

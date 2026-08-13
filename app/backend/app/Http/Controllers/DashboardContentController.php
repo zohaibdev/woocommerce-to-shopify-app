@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\DashboardContent;
 use App\Models\SupportTicket;
+use App\Models\TicketReply;
 use App\Services\SupportNotifier;
 use App\Support\CurrentShop;
 use Illuminate\Http\JsonResponse;
@@ -60,6 +61,48 @@ class DashboardContentController extends Controller
         app(SupportNotifier::class)->ticketOpened($ticket);
 
         return response()->json(['id' => $ticket->id, 'status' => $ticket->status], 201);
+    }
+
+    /**
+     * Merchant replies to their own ticket. Support was one-way before this —
+     * the merchant could open a ticket and read answers, but not respond, so any
+     * follow-up meant opening a second ticket.
+     */
+    public function replyToTicket(Request $request, int $id): JsonResponse
+    {
+        $data = $request->validate([
+            'message' => ['required', 'string', 'max:5000'],
+        ]);
+
+        $shop = CurrentShop::resolve($request);
+
+        // Scoped by shop — a merchant can only ever reply to their own ticket.
+        $ticket = SupportTicket::where('shop_id', $shop->id)->findOrFail($id);
+
+        abort_if(
+            in_array($ticket->status, ['closed'], true),
+            422,
+            'This ticket is closed. Please open a new request.',
+        );
+
+        $reply = TicketReply::create([
+            'support_ticket_id' => $ticket->id,
+            'author_type' => 'merchant',
+            'author_name' => $shop->name ?: $shop->shopify_domain,
+            'message' => $data['message'],
+        ]);
+
+        // Back to "open" so it resurfaces for the admins, and tell them about it.
+        $ticket->update(['status' => 'open', 'last_reply_at' => now()]);
+
+        app(SupportNotifier::class)->merchantReplied($ticket->fresh(), $reply);
+
+        return response()->json([
+            'author_type' => $reply->author_type,
+            'author_name' => $reply->author_name,
+            'message' => $reply->message,
+            'created_at' => $reply->created_at,
+        ], 201);
     }
 
     /** Tickets belonging to the current shop (merchant view). */

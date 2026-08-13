@@ -35,6 +35,8 @@ export default function Support() {
   const [tickets, setTickets] = useState<MerchantTicket[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
+  const [replyDrafts, setReplyDrafts] = useState<Record<number, string>>({});
+  const [replyingTo, setReplyingTo] = useState<number | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -48,6 +50,23 @@ export default function Support() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const sendReply = async (ticketId: number) => {
+    const message = (replyDrafts[ticketId] ?? "").trim();
+    if (!message) return;
+
+    setReplyingTo(ticketId);
+    setError(null);
+    try {
+      await api.replyToTicket(ticketId, message);
+      setReplyDrafts((d) => ({ ...d, [ticketId]: "" }));
+      load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setReplyingTo(null);
+    }
+  };
 
   const submit = async () => {
     setSending(true);
@@ -193,6 +212,33 @@ export default function Support() {
                                 </BlockStack>
                               </Box>
                             ))}
+                          </BlockStack>
+                        )}
+
+                        {/* Support used to be one-way: a follow-up meant opening
+                            a whole new ticket. */}
+                        {t.status !== "closed" && (
+                          <BlockStack gap="200">
+                            <Divider />
+                            <TextField
+                              label="Reply"
+                              labelHidden
+                              multiline={2}
+                              value={replyDrafts[t.id] ?? ""}
+                              onChange={(v) => setReplyDrafts((d) => ({ ...d, [t.id]: v }))}
+                              placeholder="Write a reply…"
+                              autoComplete="off"
+                            />
+                            <InlineStack align="end">
+                              <Button
+                                size="slim"
+                                loading={replyingTo === t.id}
+                                disabled={!(replyDrafts[t.id] ?? "").trim()}
+                                onClick={() => sendReply(t.id)}
+                              >
+                                Send reply
+                              </Button>
+                            </InlineStack>
                           </BlockStack>
                         )}
                       </BlockStack>

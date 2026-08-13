@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Privacy Policy — Store Shift</title>
+<meta name="description" content="What data Store Shift reads, what it stores, how long it keeps it, and how to have it deleted. We never sell or share your store data." />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<link rel="stylesheet" href="/site.css" />
+</head>
+<body>
+
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/"><span class="logo">⇄</span><span>Store Shift</span></a>
+    <nav class="nav-links">
+      <a href="/#features">Features</a>
+      <a href="/#pricing">Pricing</a>
+      <a href="/developers/">Docs</a>
+      <a href="/contact/">Contact</a>
+    </nav>
+  </div>
+</header>
+
+<div class="page-head">
+  <div class="wrap">
+    <h1>Privacy Policy</h1>
+    <p class="meta">Last updated: 14 August 2026</p>
+  </div>
+</div>
+
+<main class="prose">
+
+  <div class="note">
+    <strong>The short version.</strong> Store Shift copies data from your WooCommerce store into
+    your Shopify store. We do not keep a copy of your catalogue or your customers. We store the
+    credentials needed to do the job (encrypted), a table of which WooCommerce record became which
+    Shopify record, and the logs of the run. <strong>We never sell, rent, publish or share your data
+    with anyone.</strong>
+  </div>
+
+  <div class="toc">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#who">Who we are</a></li>
+      <li><a href="#read">Data we read from your stores</a></li>
+      <li><a href="#store">Data we actually store</a></li>
+      <li><a href="#not-store">What we deliberately do not store</a></li>
+      <li><a href="#why">Why we process it</a></li>
+      <li><a href="#sharing">Sharing and sub-processors</a></li>
+      <li><a href="#retention">How long we keep it</a></li>
+      <li><a href="#security">Security</a></li>
+      <li><a href="#rights">Your rights and deletion requests</a></li>
+      <li><a href="#customers">If you are a customer of a merchant</a></li>
+      <li><a href="#children">Children</a></li>
+      <li><a href="#changes">Changes to this policy</a></li>
+      <li><a href="#contact">Contact</a></li>
+    </ol>
+  </div>
+
+  <h2 id="who">1. Who we are</h2>
+  <p>
+    Store Shift ("we", "us") is a data migration application for Shopify that moves store data from
+    WooCommerce into Shopify. This policy explains what we do with data when you install and use it.
+  </p>
+  <p>
+    Data controller: <strong>[LEGAL ENTITY NAME]</strong>, <strong>[REGISTERED ADDRESS]</strong>.
+    Contact: <a href="mailto:support@shift-shop.webnday.com">support@shift-shop.webnday.com</a>.
+  </p>
+  <p>
+    When we migrate your store data, you are the controller of that data and we act as a
+    <strong>processor</strong> on your instructions — we only move what you select, when you tell us to.
+  </p>
+
+  <h2 id="read">2. Data we read from your stores</h2>
+  <p>To perform a migration we read the following <em>in transit</em>:</p>
+
+  <h3>From your WooCommerce store (via the REST API, using credentials you provide)</h3>
+  <ul>
+    <li><strong>Products</strong> — titles, descriptions, SKUs, prices, stock, weights, images, attributes, variations, tags, categories, brands and custom <code>meta_data</code>.</li>
+    <li><strong>Product categories</strong> — names, descriptions and images.</li>
+    <li><strong>Customers</strong> — first and last name, email address, phone number and billing/shipping addresses.</li>
+    <li><strong>Orders</strong> — line items, totals, currency, order status, dates, shipping lines and the billing/shipping addresses attached to each order.</li>
+  </ul>
+
+  <h3>From your Shopify store (via the Admin API, using the token granted at install)</h3>
+  <ul>
+    <li>Your shop domain, shop name and contact email.</li>
+    <li>The primary location ID, needed to set inventory quantities.</li>
+    <li>The IDs of records we create, so we can update them instead of duplicating them later.</li>
+  </ul>
+
+  <p>
+    We do not read Shopify data beyond what the granted scopes allow, and we do not browse your
+    store for any purpose other than completing the migration you requested.
+  </p>
+
+  <h2 id="store">3. Data we actually store</h2>
+  <p>Only the following is written to our database:</p>
+  <table>
+    <thead><tr><th>What</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Shopify shop domain, shop name, email</td><td>To identify your account and contact you about your migrations</td></tr>
+      <tr><td>Shopify access token <strong>(encrypted)</strong></td><td>To write the migrated records into your store</td></tr>
+      <tr><td>WooCommerce store URL, consumer key and secret <strong>(encrypted)</strong></td><td>To read your source data</td></tr>
+      <tr><td>Migration records — which entities you selected, options, timestamps, status</td><td>To run and report on the migration</td></tr>
+      <tr><td>ID mapping table — WooCommerce record ID → Shopify record ID</td><td>So re-running never duplicates anything</td></tr>
+      <tr><td>Progress counters and logs, including error messages returned by Shopify</td><td>So you can see what failed and why, and retry it</td></tr>
+      <tr><td>Support tickets you send us, and the email address you give for them</td><td>To answer you</td></tr>
+      <tr><td>Your subscription plan and Shopify charge ID</td><td>To apply the right plan limits</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note warn">
+    <strong>One thing to be aware of:</strong> error logs can contain a fragment of the record that
+    failed — for example an error such as <em>"Email has already been taken"</em> alongside the
+    WooCommerce ID of the customer it referred to. We keep these so you can fix and retry failures.
+    They are deleted with everything else when you uninstall (see section 7).
+  </div>
+
+  <h2 id="not-store">4. What we deliberately do not store</h2>
+  <ul>
+    <li>We do <strong>not</strong> keep a copy of your product catalogue.</li>
+    <li>We do <strong>not</strong> keep a copy of your customer list, their addresses or their order history.</li>
+    <li>We do <strong>not</strong> store customer passwords — WooCommerce password hashes cannot be migrated to Shopify and we never request them.</li>
+    <li>We do <strong>not</strong> store payment card details. Billing is handled entirely by Shopify; we never see your card.</li>
+    <li>We do <strong>not</strong> use tracking cookies, advertising pixels or third-party analytics on the app.</li>
+  </ul>
+  <p>
+    Your records pass through our servers in memory during a migration and are written to
+    <em>your</em> Shopify store, not ours. What remains afterwards is the ID mapping described above.
+  </p>
+
+  <h2 id="why">5. Why we process it</h2>
+  <ul>
+    <li><strong>To perform the contract with you</strong> — running the migrations you request.</li>
+    <li><strong>Legitimate interests</strong> — keeping the service secure and working, diagnosing failures, preventing abuse.</li>
+    <li><strong>Legal obligation</strong> — retaining billing records where required.</li>
+  </ul>
+
+  <h2 id="sharing">6. Sharing and sub-processors</h2>
+  <p>
+    <strong>We do not sell, rent, licence, publish or trade your data. We do not share it with
+    advertisers, data brokers, AI training providers or any other third party.</strong> No one buys
+    access to it, and we do not use your store data to build products for anyone else.
+  </p>
+  <p>The only parties that touch your data are the ones needed to run the service:</p>
+  <table>
+    <thead><tr><th>Provider</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td>Shopify Inc.</td><td>The destination of your migration, and our billing processor</td></tr>
+      <tr><td>Your WooCommerce host</td><td>The source of your data — your own infrastructure</td></tr>
+      <tr><td>Our hosting provider</td><td>Runs the application servers and database</td></tr>
+      <tr><td>Our email provider (SMTP)</td><td>Delivers migration notifications and support replies</td></tr>
+    </tbody>
+  </table>
+  <p>
+    We will disclose data if legally compelled to do so by a valid order from a competent authority.
+    If that ever happens we will tell you, unless we are legally prohibited from doing so.
+  </p>
+
+  <h2 id="retention">7. How long we keep it</h2>
+  <ul>
+    <li><strong>While the app is installed</strong> — credentials, mappings, migration history and logs are kept so you can re-run and audit migrations.</li>
+    <li><strong>When you uninstall</strong> — Shopify notifies us and we mark the shop as uninstalled and stop all processing immediately.</li>
+    <li><strong>Shop redaction</strong> — when Shopify sends the <code>shop/redact</code> request (normally 48 hours after uninstall), we delete the shop's data, including the encrypted credentials, mappings and logs.</li>
+    <li><strong>Customer redaction</strong> — we act on Shopify's <code>customers/redact</code> and <code>customers/data_request</code> requests as required.</li>
+    <li><strong>Billing records</strong> — retained only as long as required for accounting and tax purposes.</li>
+  </ul>
+  <p>You do not need to wait for a webhook: you can ask us to delete everything at any time (section 9).</p>
+
+  <h2 id="security">8. Security</h2>
+  <ul>
+    <li>All WooCommerce keys and Shopify tokens are <strong>encrypted at rest</strong> and are never returned to the browser in full — they are shown masked.</li>
+    <li>All traffic is over HTTPS.</li>
+    <li>Every Shopify webhook and OAuth callback is HMAC-verified before it is accepted.</li>
+    <li>Every database query is scoped to a single shop, so one merchant's data cannot be reached from another's session.</li>
+    <li>Shopify offline access tokens are short-lived and refreshed automatically.</li>
+  </ul>
+  <p>
+    No system is perfectly secure. If a breach affects your data we will notify you and the relevant
+    supervisory authority as required by law.
+  </p>
+
+  <h2 id="rights">9. Your rights and deletion requests</h2>
+  <p>Depending on where you live, you may have the right to:</p>
+  <ul>
+    <li>Access the personal data we hold about you</li>
+    <li>Have it corrected or deleted</li>
+    <li>Restrict or object to processing</li>
+    <li>Receive it in a portable format</li>
+    <li>Complain to your local data protection authority</li>
+  </ul>
+  <p>
+    To exercise any of these, email
+    <a href="mailto:support@shift-shop.webnday.com">support@shift-shop.webnday.com</a> from the
+    address associated with your store, or open a ticket from the Support page inside the app. We
+    respond within <strong>30 days</strong>, and usually much sooner.
+  </p>
+  <p>
+    The fastest way to delete everything is to uninstall the app from your Shopify admin — that
+    starts the deletion process automatically.
+  </p>
+
+  <h2 id="customers">10. If you are a customer of a merchant</h2>
+  <p>
+    If you shopped at a store that used Store Shift, we processed your details only to copy them from
+    that merchant's WooCommerce store into their Shopify store, on their instruction. We are a
+    processor; the merchant is the controller. Please direct access or deletion requests to the
+    merchant. If you contact us directly we will pass your request to them and assist.
+  </p>
+
+  <h2 id="children">11. Children</h2>
+  <p>
+    Store Shift is a business tool and is not directed at anyone under 16. We do not knowingly
+    collect personal data from children.
+  </p>
+
+  <h2 id="changes">12. Changes to this policy</h2>
+  <p>
+    If we change this policy we will update the date at the top of this page. Material changes will
+    be announced inside the app before they take effect.
+  </p>
+
+  <h2 id="contact">13. Contact</h2>
+  <p>
+    Questions about privacy, or a deletion request:<br />
+    <a href="mailto:support@shift-shop.webnday.com">support@shift-shop.webnday.com</a><br />
+    Or use the <a href="/contact/">contact form</a>.
+  </p>
+
+</main>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div class="footer-bottom">
+      <div>© <span id="year"></span> Store Shift. All rights reserved.</div>
+      <div>
+        <a href="/privacy/">Privacy</a> ·
+        <a href="/terms/">Terms</a> ·
+        <a href="/refund/">Refunds</a> ·
+        <a href="/contact/">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+</body>
+</html>

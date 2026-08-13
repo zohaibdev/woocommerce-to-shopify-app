@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Documentation — Store Shift</title>
+<meta name="description" content="Complete documentation for Store Shift: how migrations work, what maps to what, plan limits, error handling, the API, and troubleshooting." />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<link rel="stylesheet" href="/site.css" />
+</head>
+<body>
+
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="/"><span class="logo">⇄</span><span>Store Shift</span></a>
+    <nav class="nav-links">
+      <a href="/#features">Features</a>
+      <a href="/#pricing">Pricing</a>
+      <a href="/contact/">Contact</a>
+    </nav>
+  </div>
+</header>
+
+<div class="page-head">
+  <div class="wrap">
+    <h1>Documentation</h1>
+    <p class="meta">Everything Store Shift does, how it does it, and what to do when it doesn't.</p>
+  </div>
+</div>
+
+<main class="prose">
+
+  <div class="toc">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#requirements">Requirements</a></li>
+      <li><a href="#getting-started">Getting started</a></li>
+      <li><a href="#what-migrates">What gets migrated</a></li>
+      <li><a href="#mapping">Field mapping reference</a></li>
+      <li><a href="#not-migrated">What is not migrated</a></li>
+      <li><a href="#engine">How the migration engine works</a></li>
+      <li><a href="#idempotency">Re-running and idempotency</a></li>
+      <li><a href="#resilience">Error handling and field shedding</a></li>
+      <li><a href="#plans">Plans and limits</a></li>
+      <li><a href="#progress">Progress, logs and notifications</a></li>
+      <li><a href="#retry">Retrying failed items</a></li>
+      <li><a href="#api">API reference</a></li>
+      <li><a href="#security">Security model</a></li>
+      <li><a href="#troubleshooting">Troubleshooting</a></li>
+      <li><a href="#glossary">Glossary</a></li>
+    </ol>
+  </div>
+
+  <h2 id="overview">1. Overview</h2>
+  <p>
+    Store Shift is an embedded Shopify app that copies data from a WooCommerce store into a Shopify
+    store. It reads WooCommerce through its REST API v3 and writes to Shopify through the Admin
+    GraphQL API.
+  </p>
+  <p>Three design rules shape everything else:</p>
+  <ul>
+    <li><strong>Nothing runs in your browser.</strong> A migration is a set of background jobs on our servers. The page only reports on it.</li>
+    <li><strong>Everything is chunked.</strong> WooCommerce is read a page at a time and Shopify is written a batch at a time, so store size does not change how it behaves.</li>
+    <li><strong>Every record is mapped.</strong> We remember which WooCommerce record became which Shopify record, which is what makes a re-run safe.</li>
+  </ul>
+
+  <h2 id="requirements">2. Requirements</h2>
+  <table>
+    <thead><tr><th>Requirement</th><th>Detail</th></tr></thead>
+    <tbody>
+      <tr><td>WordPress</td><td>5.6 or later</td></tr>
+      <tr><td>WooCommerce</td><td>5.0 or later</td></tr>
+      <tr><td>REST API</td><td>v3 enabled, reachable from the internet over HTTPS</td></tr>
+      <tr><td>Credentials</td><td>Consumer key + secret with at least <strong>Read</strong> access</td></tr>
+      <tr><td>Shopify</td><td>Any plan that allows app installation</td></tr>
+    </tbody>
+  </table>
+  <div class="note warn">
+    <strong>The most common blocker.</strong> Your WooCommerce REST API must be publicly reachable.
+    Stores behind a firewall, an IP allowlist, HTTP basic auth, "coming soon"/maintenance mode, or an
+    aggressive security plugin will fail to connect — nothing can be read, so nothing can be migrated.
+  </div>
+
+  <h2 id="getting-started">3. Getting started</h2>
+
+  <h3>Step 1 — Create WooCommerce API keys</h3>
+  <p>In WordPress admin go to <strong>WooCommerce → Settings → Advanced → REST API → Add key</strong>:</p>
+  <ul>
+    <li><strong>Description</strong> — anything, e.g. "Store Shift"</li>
+    <li><strong>User</strong> — an administrator account</li>
+    <li><strong>Permissions</strong> — <code>Read</code> is enough; Store Shift never writes to WooCommerce</li>
+  </ul>
+  <p>Copy the consumer key (<code>ck_…</code>) and secret (<code>cs_…</code>) — WooCommerce shows the secret only once.</p>
+
+  <h3>Step 2 — Connect the store</h3>
+  <p>
+    In Store Shift open <strong>WooCommerce</strong>, paste the store URL, key and secret, then press
+    <strong>Test connection</strong>. On success you will see your WooCommerce and WordPress versions.
+    Your credentials are encrypted before they are stored and are only ever shown back masked.
+  </p>
+
+  <h3>Step 3 — Start a migration</h3>
+  <p>
+    <strong>Migrations → New migration</strong>. Pick what to migrate; the wizard shows how many
+    records exist in WooCommerce and how many your plan covers. Anything your plan does not include
+    is disabled with the reason shown.
+  </p>
+  <p>Optional settings on this screen:</p>
+  <ul>
+    <li><strong>Weight unit</strong> — WooCommerce does not report its unit through the API, so pick the one your store uses. Product weights are imported with it.</li>
+    <li><strong>Custom tags</strong> — added to every migrated product and customer, handy for finding or rolling back a batch later.</li>
+    <li><strong>Default vendor</strong> — used for products with no brand. Leave blank to let Shopify default it to your shop name.</li>
+    <li><strong>Email me when this finishes</strong> — a summary email when the run completes.</li>
+  </ul>
+
+  <h3>Step 4 — Let it run</h3>
+  <p>
+    Press start and close the tab if you like. Progress updates every few seconds while you watch, and
+    the <strong>Activity</strong> log shows what is happening in real time.
+  </p>
+
+  <h2 id="what-migrates">4. What gets migrated</h2>
+  <table>
+    <thead><tr><th>Entity</th><th>Becomes</th><th>Includes</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Products</td><td>Shopify products</td>
+        <td>Title, description, vendor, product type, status, tags, prices, compare-at prices, SKUs, inventory and tracking, weight and unit, requires-shipping, options, variants, product and variant images, metafields, brands, collection membership</td>
+      </tr>
+      <tr>
+        <td>Categories</td><td>Custom collections</td>
+        <td>Title, description, category image. Products are linked to their collections automatically</td>
+      </tr>
+      <tr>
+        <td>Customers</td><td>Shopify customers</td>
+        <td>First and last name, email, phone (reformatted to E.164), billing address, custom tags</td>
+      </tr>
+      <tr>
+        <td>Orders</td><td>Shopify orders</td>
+        <td>Line items, shipping lines, billing and shipping addresses, currency, financial status, original order date, a matching sale transaction for paid orders, tags</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="note">
+    <strong>Variants, options and images are not separate choices.</strong> They are migrated inline
+    with each product in a single operation, which is faster and avoids half-built products.
+  </div>
+
+  <h2 id="mapping">5. Field mapping reference</h2>
+
+  <h3>Products</h3>
+  <table>
+    <thead><tr><th>WooCommerce</th><th>Shopify</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>name</code></td><td><code>title</code></td><td></td></tr>
+      <tr><td><code>description</code></td><td><code>descriptionHtml</code></td><td>HTML preserved</td></tr>
+      <tr><td><code>status</code></td><td><code>status</code></td><td><code>publish</code> → <code>ACTIVE</code>, everything else → <code>DRAFT</code></td></tr>
+      <tr><td><code>regular_price</code> / <code>sale_price</code></td><td><code>price</code> / <code>compareAtPrice</code></td><td>When on sale, sale becomes the price and regular becomes compare-at</td></tr>
+      <tr><td><code>sku</code></td><td><code>inventoryItem.sku</code></td><td></td></tr>
+      <tr><td><code>manage_stock</code>, <code>stock_quantity</code></td><td><code>tracked</code>, <code>inventoryQuantities</code></td><td>Set at your primary location</td></tr>
+      <tr><td><code>backorders</code></td><td><code>inventoryPolicy</code></td><td>Anything other than "no" becomes <code>CONTINUE</code></td></tr>
+      <tr><td><code>weight</code></td><td><code>measurement.weight</code></td><td>Unit is the one you pick in the wizard</td></tr>
+      <tr><td><code>virtual</code></td><td><code>requiresShipping</code></td><td>Inverted</td></tr>
+      <tr><td><code>attributes</code> (variation-enabled)</td><td><code>productOptions</code></td><td>Colour, size, etc.</td></tr>
+      <tr><td><code>variations</code></td><td><code>variants</code></td><td>Matched by option combination</td></tr>
+      <tr><td><code>images</code> + variation images</td><td><code>files</code> + variant media</td><td>De-duplicated by source URL</td></tr>
+      <tr><td><code>categories</code></td><td><code>collections</code></td><td>Resolved through the mapping table</td></tr>
+      <tr><td><code>brands</code></td><td><code>vendor</code>, a metafield, and optionally tags</td><td>First brand becomes the vendor</td></tr>
+      <tr><td><code>meta_data</code></td><td><code>metafields</code></td><td>Namespaced <code>woocommerce</code>; a definition is created per key so they appear in your admin</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Customers</h3>
+  <table>
+    <thead><tr><th>WooCommerce</th><th>Shopify</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>first_name</code>, <code>last_name</code></td><td><code>firstName</code>, <code>lastName</code></td><td>Falls back to the billing name</td></tr>
+      <tr><td><code>email</code></td><td><code>email</code></td><td>Required — customers without one are skipped</td></tr>
+      <tr><td><code>billing.phone</code></td><td><code>phone</code></td><td>Converted to E.164 using the billing country</td></tr>
+      <tr><td><code>billing.*</code></td><td><code>addresses[]</code></td><td>Address 1/2, city, province, country, ZIP</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Phone numbers are the most common source of customer rejections. WooCommerce stores whatever the
+    shopper typed ("0300 1234567"); Shopify requires international format. Store Shift uses the
+    billing country to add the correct calling code and strip the national trunk prefix. If a number
+    still cannot be made valid it is left out and the customer is migrated without it.
+  </p>
+
+  <h3>Orders</h3>
+  <table>
+    <thead><tr><th>WooCommerce status</th><th>Shopify financial status</th></tr></thead>
+    <tbody>
+      <tr><td><code>completed</code>, <code>processing</code></td><td><code>PAID</code></td></tr>
+      <tr><td><code>refunded</code></td><td><code>REFUNDED</code></td></tr>
+      <tr><td><code>cancelled</code>, <code>failed</code></td><td><code>VOIDED</code></td></tr>
+      <tr><td><code>pending</code>, <code>on-hold</code></td><td><code>PENDING</code></td></tr>
+    </tbody>
+  </table>
+  <p>
+    Orders are created with their original date, inventory is bypassed so historical orders do not
+    move your stock, and no receipts are sent to customers.
+  </p>
+  <div class="note warn">
+    <strong>Known limitation.</strong> Order line items are created as custom line items rather than
+    being linked to the migrated product variants. Totals, titles and SKUs are correct, but the
+    orders are not connected to your product records.
+  </div>
+
+  <h2 id="not-migrated">6. What is not migrated</h2>
+  <ul>
+    <li><strong>Customer passwords</strong> — WooCommerce and Shopify hash passwords in incompatible ways. This is not a limitation we can remove; your customers set a new password on first login.</li>
+    <li><strong>Themes and design</strong>, page and blog content, menus.</li>
+    <li><strong>Discount codes and coupons</strong>, gift cards, subscriptions.</li>
+    <li><strong>Product reviews.</strong></li>
+    <li><strong>Refund records</strong> attached to orders (the order's status is migrated, the individual refund transactions are not).</li>
+    <li><strong>SEO redirects</strong> from old WooCommerce URLs.</li>
+    <li><strong>Anything in WooCommerce plugins</strong> that is not exposed through the REST API.</li>
+  </ul>
+
+  <h2 id="engine">7. How the migration engine works</h2>
+  <p>Starting a migration creates a plan and then walks it:</p>
+  <pre><code>Start
+  ├─ count each selected entity in WooCommerce
+  ├─ cap each total to your plan limit
+  ├─ create batch rows (one per page of source data)
+  └─ dispatch the first batch
+
+Batch  (repeats until none are left)
+  ├─ fetch one page from WooCommerce
+  ├─ migrate each item into Shopify
+  ├─ checkpoint after every item
+  ├─ stop after ~35 seconds and continue in a fresh job
+  └─ hand over to the next batch
+
+Finalize
+  ├─ recompute the final counters
+  ├─ set the overall status
+  └─ send the completion email if requested</code></pre>
+
+  <p>Three properties make a run hard to break:</p>
+  <ul>
+    <li><strong>Resumable.</strong> Progress is checkpointed after every single record, so a worker that dies mid-page resumes at the next record rather than replaying the page.</li>
+    <li><strong>Time-bounded.</strong> No job runs long enough to be considered dead and restarted underneath itself.</li>
+    <li><strong>Self-advancing.</strong> Each batch hands over to the next when it ends — successfully or not. One broken batch costs that batch, never the migration.</li>
+  </ul>
+  <p>
+    A watchdog sweeps for runs that have stopped making progress for any reason outside the app and
+    resumes them automatically.
+  </p>
+
+  <h3>Dependency order</h3>
+  <p>
+    Entities always run in an order that satisfies their dependencies: <strong>categories → products</strong>
+    (so products can join their collections) and <strong>customers → orders</strong> (so orders can be
+    associated by email).
+  </p>
+
+  <h2 id="idempotency">8. Re-running and idempotency</h2>
+  <p>
+    Every migrated record is written to a mapping table keyed by
+    <code>(shop, entity type, WooCommerce ID)</code>. Before creating anything, Store Shift looks the
+    record up.
+  </p>
+  <table>
+    <thead><tr><th>Situation</th><th>What happens on a re-run</th></tr></thead>
+    <tbody>
+      <tr><td>Product or category already migrated</td><td><strong>Updated in place</strong> with the current WooCommerce data</td></tr>
+      <tr><td>Product or category deleted in Shopify</td><td><strong>Recreated</strong> and the mapping repaired</td></tr>
+      <tr><td>Customer or order already migrated</td><td><strong>Skipped</strong> — they are not overwritten</td></tr>
+      <tr><td>Record failed last time</td><td><strong>Retried</strong></td></tr>
+    </tbody>
+  </table>
+  <p>The practical result: running the same migration twice never gives you two of anything.</p>
+
+  <h2 id="resilience">9. Error handling and field shedding</h2>
+  <p>
+    Real WooCommerce stores contain data Shopify refuses. Rather than failing the whole record, Store
+    Shift removes the offending <em>optional</em> field and tries again, up to three rounds — so
+    several bad fields are shed one after another. The record lands, and a warning tells you exactly
+    what was left out.
+  </p>
+  <table>
+    <thead><tr><th>Record</th><th>Fields that can be dropped</th><th>Fields that never are</th></tr></thead>
+    <tbody>
+      <tr><td>Product</td><td>Images, metafields, collection links, tags, vendor, product type, description</td><td>Title, options, variants</td></tr>
+      <tr><td>Category</td><td>Image, description</td><td>Title</td></tr>
+      <tr><td>Customer</td><td>Phone, addresses, tags</td><td>Email</td></tr>
+      <tr><td>Order</td><td>Payment record, addresses, shipping line, tags, note, original date</td><td>Line items, currency, financial status</td></tr>
+    </tbody>
+  </table>
+  <p>
+    If a rejection touches something required, or an error set mixes an optional problem with a real
+    one, the record still fails — loudly and with the reason — so genuine problems never hide behind
+    a partial success.
+  </p>
+  <p>
+    There is one shortcut worth knowing: if several products in a row have their images rejected,
+    Store Shift concludes the store's media is unreachable, logs a warning, and stops sending images
+    for the rest of that run. This roughly halves the work on a store whose uploads folder is gone.
+  </p>
+
+  <h3>Rate limits</h3>
+  <p>
+    Shopify throttling is expected, not exceptional. When it happens the batch is re-queued for after
+    the throttle window and resumes exactly where it stopped. Nothing is lost and nothing is
+    duplicated.
+  </p>
+
+  <h2 id="plans">10. Plans and limits</h2>
+  <table>
+    <thead><tr><th>Plan</th><th>Products</th><th>Customers</th><th>Orders</th><th>Metafields</th></tr></thead>
+    <tbody>
+      <tr><td>Free</td><td>10</td><td>10</td><td>—</td><td>—</td></tr>
+      <tr><td>Basic — $19/mo</td><td>2,000</td><td>2,000</td><td>1,000</td><td>Yes</td></tr>
+      <tr><td>Pro — $49/mo</td><td>20,000</td><td>20,000</td><td>20,000</td><td>Yes</td></tr>
+      <tr><td>Enterprise — $149/mo</td><td>Unlimited</td><td>Unlimited</td><td>Unlimited</td><td>Yes</td></tr>
+    </tbody>
+  </table>
+  <p>Limits are enforced in three places so they cannot be worked around by accident:</p>
+  <ul>
+    <li>The wizard disables entities your plan does not include and shows how many of your records it covers.</li>
+    <li>The API refuses to create a migration for an entity outside your plan.</li>
+    <li>The engine caps every batch to the remaining allowance.</li>
+  </ul>
+  <p>Upgrading takes effect immediately — start a new migration and the higher limit applies.</p>
+
+  <h2 id="progress">11. Progress, logs and notifications</h2>
+  <ul>
+    <li><strong>Per-entity progress</strong> — processed / total, successful and failed counts, updated about once a second while a run is active.</li>
+    <li><strong>Activity log</strong> — a live feed of what the run is doing, including plan-limit warnings, skipped fields and per-record errors.</li>
+    <li><strong>Downloadable report</strong> — a plain-text summary of the run, every failed item with its reason, and the full log. This is the single most useful thing to attach when contacting support.</li>
+    <li><strong>Completion email</strong> — optional, requested in the wizard.</li>
+  </ul>
+  <p>
+    Counters are derived from the mapping table rather than incremented as work happens, so the
+    numbers you see are always the truth even if a batch was replayed.
+  </p>
+
+  <h2 id="retry">12. Retrying failed items</h2>
+  <p>
+    A finished migration with failures shows every failed record with the exact message Shopify
+    returned. <strong>Retry failed items</strong> re-fetches just those records from WooCommerce and
+    re-migrates them — it does not re-run the whole migration.
+  </p>
+  <p>
+    Records that no longer exist in WooCommerce are marked skipped rather than retried forever.
+    Fix the underlying problem first — that is usually a plan upgrade, a reachable image URL, or a
+    corrected customer email — then retry.
+  </p>
+
+  <h2 id="api">13. API reference</h2>
+  <p>
+    The app's API is consumed by its own embedded frontend and authenticated with a Shopify session
+    token. It is documented here for reference and for debugging; it is not a public integration API,
+    and it is not versioned.
+  </p>
+  <table>
+    <thead><tr><th>Method</th><th>Endpoint</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td>GET</td><td><code>/api/shop</code></td><td>Current shop, granted scopes, whether re-authorisation is needed</td></tr>
+      <tr><td>POST</td><td><code>/api/woocommerce/connect</code></td><td>Save and test WooCommerce credentials</td></tr>
+      <tr><td>POST</td><td><code>/api/woocommerce/test</code></td><td>Re-test the stored connection</td></tr>
+      <tr><td>GET</td><td><code>/api/woocommerce/preview</code></td><td>Available counts per entity, plus what your plan allows</td></tr>
+      <tr><td>GET</td><td><code>/api/migrations</code></td><td>Migration history (paginated)</td></tr>
+      <tr><td>POST</td><td><code>/api/migrations</code></td><td>Create and enqueue a migration</td></tr>
+      <tr><td>GET</td><td><code>/api/migrations/{id}</code></td><td>Status and per-entity progress</td></tr>
+      <tr><td>GET</td><td><code>/api/migrations/{id}/items</code></td><td>Migrated items, filterable by entity and status</td></tr>
+      <tr><td>GET</td><td><code>/api/migrations/{id}/logs</code></td><td>Activity log</td></tr>
+      <tr><td>GET</td><td><code>/api/migrations/{id}/download</code></td><td>Plain-text report</td></tr>
+      <tr><td>POST</td><td><code>/api/migrations/{id}/cancel</code></td><td>Cancel a running migration</td></tr>
+      <tr><td>POST</td><td><code>/api/migrations/{id}/retry-failed</code></td><td>Retry only the failed items</td></tr>
+      <tr><td>GET</td><td><code>/api/billing</code></td><td>Plans and the shop's current plan</td></tr>
+      <tr><td>GET/POST</td><td><code>/api/support/tickets</code></td><td>List or open support tickets</td></tr>
+      <tr><td>POST</td><td><code>/api/support/tickets/{id}/reply</code></td><td>Reply to your own ticket</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Migration status shape</h3>
+  <pre><code>{
+  "id": 102,
+  "status": "processing",
+  "entities": [
+    { "type": "product",  "total": 1250, "processed": 840,
+      "successful": 820, "failed": 20, "percentage": 67.2 },
+    { "type": "category", "total": 35,   "processed": 35,
+      "successful": 35,  "failed": 0,  "percentage": 100 }
+  ],
+  "started_at": "2026-08-08T10:30:00Z",
+  "completed_at": null
+}</code></pre>
+  <p>
+    Statuses are <code>pending</code>, <code>processing</code>, <code>completed</code>,
+    <code>completed_with_errors</code>, <code>failed</code>, <code>cancelled</code> and
+    <code>paused</code>.
+  </p>
+
+  <h2 id="security">14. Security model</h2>
+  <ul>
+    <li><strong>Credentials encrypted at rest.</strong> WooCommerce keys and Shopify tokens are encrypted in the database and only ever returned masked.</li>
+    <li><strong>Short-lived Shopify tokens.</strong> Offline access tokens expire and are refreshed automatically.</li>
+    <li><strong>HMAC verification.</strong> Every OAuth callback and webhook is verified before it is trusted.</li>
+    <li><strong>Session-token auth.</strong> Every API call from the embedded app carries a signed Shopify session token, validated on each request.</li>
+    <li><strong>Tenant isolation.</strong> Every query is scoped to a single shop.</li>
+    <li><strong>Read-only at the source.</strong> Store Shift never writes to or deletes from your WooCommerce store.</li>
+  </ul>
+  <p>See the <a href="/privacy/">privacy policy</a> for what is stored and for how long.</p>
+
+  <h2 id="troubleshooting">15. Troubleshooting</h2>
+  <table>
+    <thead><tr><th>Symptom</th><th>Likely cause and fix</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>"Test connection" fails</td>
+        <td>The REST API is not reachable. Check the store is public over HTTPS, not in maintenance mode, and that no security plugin is blocking API requests. Confirm the key has Read permission and has not been revoked.</td>
+      </tr>
+      <tr>
+        <td>Products migrate without images</td>
+        <td>Shopify downloads images from your URLs. If they 404 — a moved or deleted uploads folder, or hotlink protection — the product is migrated without them and a warning is logged. Make the image URLs publicly fetchable and re-run.</td>
+      </tr>
+      <tr>
+        <td>Customers or orders all fail with an access error</td>
+        <td>Customer and order data are protected by Shopify and need approval before an app can write them. Until that approval is in place, products and categories still migrate normally.</td>
+      </tr>
+      <tr>
+        <td>"Phone is invalid"</td>
+        <td>The number could not be converted to international format, usually because the billing country is missing. The customer is still migrated, without the phone number.</td>
+      </tr>
+      <tr>
+        <td>"Email has already been taken"</td>
+        <td>A Shopify customer with that email already exists. Existing customers are not overwritten.</td>
+      </tr>
+      <tr>
+        <td>Far fewer records than expected</td>
+        <td>A plan limit. The wizard and the activity log both state the cap that was applied. Upgrade and run again — already-migrated records are updated, not duplicated.</td>
+      </tr>
+      <tr>
+        <td>Progress seems to pause</td>
+        <td>Normal on large products: each one can involve several API calls, and Shopify throttling adds deliberate waiting. The activity log will show it is still working.</td>
+      </tr>
+      <tr>
+        <td>Order totals look right but products are not linked</td>
+        <td>Expected — order line items are custom lines. See the note in section 5.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>
+    If none of these fit, download the migration report and send it to
+    <a href="/contact/">support</a>. It contains everything we need.
+  </p>
+
+  <h2 id="glossary">16. Glossary</h2>
+  <table>
+    <tbody>
+      <tr><td><strong>Batch</strong></td><td>One page of source records, processed as a single unit of work</td></tr>
+      <tr><td><strong>Entity</strong></td><td>A type of record: product, category, customer or order</td></tr>
+      <tr><td><strong>Mapping</strong></td><td>The stored link between a WooCommerce record and the Shopify record created from it</td></tr>
+      <tr><td><strong>Idempotent</strong></td><td>Safe to run more than once — the second run produces no extra records</td></tr>
+      <tr><td><strong>Field shedding</strong></td><td>Dropping an optional field Shopify rejected so the record itself still migrates</td></tr>
+      <tr><td><strong>Upsert</strong></td><td>Update the record if it exists, create it if it does not</td></tr>
+      <tr><td><strong>E.164</strong></td><td>The international phone format Shopify requires, e.g. <code>+923001234567</code></td></tr>
+    </tbody>
+  </table>
+
+</main>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div class="footer-bottom">
+      <div>© <span id="year"></span> Store Shift. All rights reserved.</div>
+      <div>
+        <a href="/privacy/">Privacy</a> ·
+        <a href="/terms/">Terms</a> ·
+        <a href="/refund/">Refunds</a> ·
+        <a href="/contact/">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+</body>
+</html>

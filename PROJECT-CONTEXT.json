@@ -38,7 +38,9 @@
   "folder_structure": {
     "note": "The repo mirrors the production layout exactly. `app/` is the deployable web root.",
     "local": {
-      "store-shift/index.html": "Public landing page (plain HTML/CSS, no build step)",
+      "store-shift/index.html": "Public landing page (plain HTML/CSS, no build step). Contains an embed guard: if opened with host/embedded/billing params it redirects to /app/, so the marketing page can never render inside the Shopify admin iframe.",
+    "store-shift/site.css": "Shared stylesheet for ALL public pages (landing, legal, docs, contact)",
+    "store-shift/privacy|terms|refund|contact|developers/index.html": "Public pages served at clean URLs via directory index — no .htaccess rewrite needed, so /app is never affected. privacy/ is the URL Shopify requires for the listing.",
       "store-shift/app/index.php": "PRODUCTION front controller — paths point to ./backend/ (NOT ../)",
       "store-shift/app/.htaccess": "Laravel rewrite rules",
       "store-shift/app/assets/": "Built JS/CSS (copied from frontend/dist/assets)",
@@ -122,7 +124,7 @@
     "subscriptions": "shop_id, plan_id, status, shopify_charge_id",
     "support_tickets / ticket_replies": "merchant support with admin replies",
     "dashboard_contents": "admin-managed content shown in the merchant app",
-    "app_settings": "admin-editable app config. One ENCRYPTED json blob per key (currently 'mail' = SMTP). Overrides .env at boot via MailSettings::apply() in AppServiceProvider."
+    "app_settings": "admin-editable app config. One ENCRYPTED json blob per key: 'mail' = SMTP (overrides .env at boot via MailSettings::apply()), 'branding' = email logo + name (App\\Services\\Branding). The logo file lives in storage/app/branding and is streamed by the public GET /api/branding/logo route, so no storage:link is needed."
   },
 
   "plans_and_limits": {
@@ -276,8 +278,13 @@
     },
     {
       "item": "Privacy policy page",
-      "status": "NOT CREATED",
-      "impact": "Required for App Store listing"
+      "status": "DONE — /privacy/ (also /terms/, /refund/, /contact/, /developers/)",
+      "impact": "Placeholders [LEGAL ENTITY NAME], [REGISTERED ADDRESS] and [JURISDICTION] must be filled in before submission"
+    },
+    {
+      "item": "support@shift-shop.webnday.com mailbox",
+      "status": "UNKNOWN — verify it exists",
+      "impact": "Every public page and the App Store listing points at it; the reviewer may email it"
     },
     {
       "item": "Public WooCommerce test store for the reviewer",
@@ -316,7 +323,7 @@
   },
 
   "testing": {
-    "total_tests": 110,
+    "total_tests": 127,
     "command": "cd app/backend && php artisan test",
     "suites": {
       "MigrationEngineTest": "queue dispatch, dependency ordering, idempotency, custom tags",

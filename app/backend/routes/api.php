@@ -9,6 +9,8 @@ use App\Http\Controllers\Admin\AdminStoreController;
 use App\Http\Controllers\Admin\AdminTicketController;
 use App\Http\Controllers\Auth\ShopifyOAuthController;
 use App\Http\Controllers\BillingController;
+use App\Http\Controllers\BrandingController;
+use App\Http\Controllers\ContactController;
 use App\Http\Controllers\DashboardContentController;
 use App\Http\Controllers\MigrationController;
 use App\Http\Controllers\ShopController;
@@ -22,6 +24,12 @@ Route::get('/auth/callback', [ShopifyOAuthController::class, 'callback']);
 
 // --- Billing callback (Shopify redirects the merchant here) ---
 Route::get('/billing/callback', [BillingController::class, 'callback']);
+
+// --- Email logo (public: mail clients fetch it with no session) ---
+Route::get('/branding/logo', [BrandingController::class, 'logo']);
+
+// --- Public contact form on the marketing site (rate limited: it has no auth) ---
+Route::post('/contact', [ContactController::class, 'send'])->middleware('throttle:5,60');
 
 // --- Shopify webhooks (HMAC-verified inside the controller) ---
 Route::post('/webhooks/app-uninstalled', [WebhookController::class, 'appUninstalled']);
@@ -48,6 +56,7 @@ Route::middleware('shopify.session')->group(function () {
     Route::get('/content', [DashboardContentController::class, 'index']);
     Route::post('/support/tickets', [DashboardContentController::class, 'createTicket']);
     Route::get('/support/tickets', [DashboardContentController::class, 'myTickets']);
+    Route::post('/support/tickets/{id}/reply', [DashboardContentController::class, 'replyToTicket']);
 
     Route::prefix('migrations')->group(function () {
         Route::get('/', [MigrationController::class, 'index']);
@@ -96,6 +105,8 @@ Route::prefix('admin')->group(function () {
         Route::get('/settings/mail', [AdminSettingsController::class, 'mail']);
         Route::put('/settings/mail', [AdminSettingsController::class, 'updateMail']);
         Route::post('/settings/mail/test', [AdminSettingsController::class, 'testMail']);
+        Route::get('/settings/branding', [AdminSettingsController::class, 'branding']);
+        Route::post('/settings/branding', [AdminSettingsController::class, 'updateBranding']);
 
         // Dashboard content management
         Route::get('/content', [AdminContentController::class, 'index']);

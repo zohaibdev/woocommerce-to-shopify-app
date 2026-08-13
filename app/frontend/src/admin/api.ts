@@ -54,6 +54,13 @@ export interface PageMeta {
   has_more: boolean;
 }
 
+export interface BrandingSettings {
+  /** Shown at the top of emails when there is no logo. */
+  name: string;
+  has_logo: boolean;
+  logo_url: string | null;
+}
+
 export interface MailSettings {
   host: string | null;
   port: number;
@@ -235,6 +242,35 @@ export const adminApi = {
     }),
   updateTicket: (id: number, data: { status?: string; priority?: string }) =>
     request<Ticket>(`/tickets/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+
+  branding: () => request<BrandingSettings>("/settings/branding"),
+
+  /** Multipart — do NOT set Content-Type, the browser adds the boundary. */
+  saveBranding: async (data: { logo?: File; name?: string; removeLogo?: boolean }) => {
+    const body = new FormData();
+    if (data.logo) body.append("logo", data.logo);
+    if (data.name !== undefined) body.append("name", data.name);
+    if (data.removeLogo) body.append("remove_logo", "1");
+
+    const res = await fetch(`${BASE}/settings/branding`, {
+      method: "POST",
+      headers: { Accept: "application/json", Authorization: `Bearer ${adminToken.get()}` },
+      body,
+    });
+
+    if (!res.ok) {
+      let msg = `Upload failed (${res.status})`;
+      try {
+        const b = await res.json();
+        msg = b.message ?? b.error ?? msg;
+      } catch {
+        /* keep default */
+      }
+      throw new Error(msg);
+    }
+
+    return (await res.json()) as BrandingSettings;
+  },
 
   mailSettings: () => request<MailSettings>("/settings/mail"),
   saveMailSettings: (data: MailSettingsInput) =>
