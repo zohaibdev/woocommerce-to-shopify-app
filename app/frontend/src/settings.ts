@@ -6,6 +6,8 @@ export interface AppSettings {
   defaultTags: string;
   emailNotifications: boolean;
   pollSeconds: number;
+  /** Weight unit used by the WooCommerce store (Shopify enum). */
+  weightUnit: string;
   /** Tutorial video embed URL shown on the dashboard (YouTube/Vimeo embed link). */
   tutorialVideoUrl: string;
   /** Where the Support links point (mailto: or a help-desk URL). */
@@ -21,6 +23,7 @@ const DEFAULTS: AppSettings = {
   defaultTags: "",
   emailNotifications: false,
   pollSeconds: 3,
+  weightUnit: "KILOGRAMS",
   tutorialVideoUrl: "",
   supportUrl: "mailto:support@example.com",
   docsUrl: "https://woocommerce.com/document/woocommerce-rest-api/",

@@ -6,6 +6,7 @@ use App\Migration\MigratorRegistry;
 use App\Models\WoocommerceConnection;
 use App\Services\WooCommerceClient;
 use App\Support\CurrentShop;
+use App\Support\PlanAllowance;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -54,16 +55,28 @@ class WooCommerceController extends Controller
         abort_unless($connection, 404, 'No WooCommerce connection');
 
         $registry = app(MigratorRegistry::class);
+        $plan = $shop->currentPlan();
         $counts = [];
-        foreach (['product', 'category', 'attribute', 'variation', 'media', 'customer', 'order'] as $type) {
+        // Only entities that actually perform work. Variants, images and
+        // attributes migrate INLINE with products, so counting them separately
+        // double-counted the estimate and created pointless batch jobs.
+        foreach (['product', 'category', 'customer', 'order'] as $type) {
             try {
-                $counts[] = ['type' => $type, 'count' => $registry->make($type)->count($connection)];
+                $count = $registry->make($type)->count($connection);
             } catch (\Throwable $e) {
-                $counts[] = ['type' => $type, 'count' => 0];
+                $count = 0;
             }
+
+            // Ship the plan verdict with the count so the wizard can disable what
+            // the merchant cannot migrate instead of failing after they start.
+            $counts[] = ['type' => $type, 'count' => $count]
+                + PlanAllowance::forEntity($shop, $type, $count);
         }
 
-        return response()->json(['counts' => $counts]);
+        return response()->json([
+            'counts' => $counts,
+            'plan' => $plan ? ['code' => $plan->code, 'name' => $plan->name] : null,
+        ]);
     }
 
     private function runTest(WoocommerceConnection $connection): JsonResponse

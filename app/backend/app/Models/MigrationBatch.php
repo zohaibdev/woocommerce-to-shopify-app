@@ -9,7 +9,7 @@ class MigrationBatch extends Model
 {
     protected $fillable = [
         'migration_id', 'entity_type', 'batch_number',
-        'page', 'per_page', 'status', 'attempts', 'error',
+        'page', 'per_page', 'processed_offset', 'status', 'attempts', 'error',
     ];
 
     public function migration(): BelongsTo

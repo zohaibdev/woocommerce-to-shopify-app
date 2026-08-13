@@ -148,6 +148,18 @@ export default function Settings() {
                   autoComplete="off"
                 />
                 <Select
+                  label="WooCommerce weight unit"
+                  options={[
+                    { label: "Kilograms (kg)", value: "KILOGRAMS" },
+                    { label: "Grams (g)", value: "GRAMS" },
+                    { label: "Pounds (lb)", value: "POUNDS" },
+                    { label: "Ounces (oz)", value: "OUNCES" },
+                  ]}
+                  value={settings.weightUnit}
+                  onChange={(v) => update("weightUnit", v)}
+                  helpText="Prefills new migrations. WooCommerce doesn't expose its unit through the API."
+                />
+                <Select
                   label="Status polling interval"
                   options={[
                     { label: "Every 2 seconds", value: "2" },

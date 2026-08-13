@@ -56,6 +56,12 @@ abstract class AbstractMigrator implements Migrator
         $mapping = $this->existingMapping($migration, $wooId);
 
         if (! $this->upserts() && $mapping->status === 'success' && $mapping->shopify_id) {
+            // Claim the row for this run so the skip is still counted as progress
+            // (counters are derived from these rows, not from blind increments).
+            if ($mapping->migration_id !== $migration->id) {
+                $mapping->update(['migration_id' => $migration->id]);
+            }
+
             return MigrationItemResult::skipped($mapping->shopify_id);
         }
 

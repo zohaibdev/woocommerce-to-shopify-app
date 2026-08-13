@@ -8,6 +8,7 @@ use App\Migration\MigratorRegistry;
 use App\Models\MigrationItem;
 use App\Models\StoreMigration;
 use App\Support\CurrentShop;
+use App\Support\PlanAllowance;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -47,6 +48,7 @@ class MigrationController extends Controller
             'custom_tags.*' => ['string'],
             'default_vendor' => ['sometimes', 'nullable', 'string', 'max:255'],
             'name' => ['sometimes', 'nullable', 'string', 'max:120'],
+            'weight_unit' => ['sometimes', 'in:KILOGRAMS,GRAMS,POUNDS,OUNCES'],
         ]);
 
         // Normalise custom tags (accept comma-separated strings too).
@@ -69,6 +71,16 @@ class MigrationController extends Controller
         $connection = $shop->woocommerceConnection;
         abort_unless($connection && $connection->status === 'connected', 422, 'WooCommerce not connected');
 
+        // The wizard disables these, so getting here means a stale page or a direct
+        // API call. Refuse plainly instead of starting a run that migrates nothing.
+        $locked = PlanAllowance::lockedAmong($shop, $entities);
+        abort_if(
+            ! empty($locked),
+            422,
+            'Your '.($shop->currentPlan()?->name ?? 'current').' plan does not include: '
+                .implode(', ', $locked).'. Upgrade your plan to migrate them.',
+        );
+
         $migration = StoreMigration::create([
             'shop_id' => $shop->id,
             'name' => trim((string) $request->input('name', '')) ?: null,
@@ -78,6 +90,9 @@ class MigrationController extends Controller
             'options' => [
                 'custom_tags' => $customTags,
                 'default_vendor' => trim((string) $request->input('default_vendor', '')),
+                // WooCommerce doesn't expose its weight unit, so the merchant picks it.
+                'weight_unit' => $request->input('weight_unit')
+                    ?: config('migration.weight_unit', 'KILOGRAMS'),
             ],
         ]);
 

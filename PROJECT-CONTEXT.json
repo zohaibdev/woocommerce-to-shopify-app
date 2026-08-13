@@ -1,0 +1,349 @@
+{
+  "$comment": "Machine-readable project context for Claude. Read this FIRST in a new chat — it replaces re-exploring the codebase. Keep it updated when architecture changes. Secrets are NEVER stored here; see `secrets_location`.",
+  "schema_version": "1.0",
+  "last_updated": "2026-08-12",
+
+  "project": {
+    "name": "Store Shift",
+    "what_it_is": "Embedded Shopify app that migrates a merchant's WooCommerce store data into their Shopify store.",
+    "production_url": "https://shift-shop.webnday.com",
+    "app_url": "https://shift-shop.webnday.com/app",
+    "admin_url": "https://shift-shop.webnday.com/app/admin",
+    "landing_page": "https://shift-shop.webnday.com/ (static index.html, not React)",
+    "status": "Deployed to production. Not yet published on the Shopify App Store (unlisted).",
+    "local_path": "C:/Users/Zohaib/Documents/Edits/store-shift",
+    "git_remote": "https://github.com/zohaibdev/store-shift.git"
+  },
+
+  "golden_rules": [
+    "Migrations NEVER run inside an HTTP request — always queued jobs.",
+    "Everything is chunked: WooCommerce paginated, Shopify batched.",
+    "Every migrator is idempotent via the migration_items mapping table.",
+    "Respect Shopify rate limits (429 / THROTTLED) with exponential backoff.",
+    "Database is the source of truth; the frontend polls, never holds migration state.",
+    "All credentials encrypted at rest, never returned to the client (masked).",
+    "Multi-tenant: every query scoped by shop_id."
+  ],
+
+  "tech_stack": {
+    "backend": "Laravel 12 (PHP 8.2)",
+    "frontend": "React 18 + Vite + TypeScript + Shopify Polaris + App Bridge",
+    "database_local": "SQLite (app/backend/database/database.sqlite)",
+    "database_production": "MySQL (ss_main)",
+    "queue": "database driver (shared hosting has no Redis); Redis+Horizon recommended for scale",
+    "shopify_api": "Admin GraphQL API, version 2026-01",
+    "woocommerce_api": "REST API v3"
+  },
+
+  "folder_structure": {
+    "note": "The repo mirrors the production layout exactly. `app/` is the deployable web root.",
+    "local": {
+      "store-shift/index.html": "Public landing page (plain HTML/CSS, no build step)",
+      "store-shift/app/index.php": "PRODUCTION front controller — paths point to ./backend/ (NOT ../)",
+      "store-shift/app/.htaccess": "Laravel rewrite rules",
+      "store-shift/app/assets/": "Built JS/CSS (copied from frontend/dist/assets)",
+      "store-shift/app/backend/": "Laravel application",
+      "store-shift/app/backend/public/index.php": "LOCAL dev front controller — paths use ../ (for php artisan serve)",
+      "store-shift/app/backend/resources/spa/index.html": "Built SPA shell, served by Laravel (NOT in public/)",
+      "store-shift/app/frontend/": "React source",
+      "store-shift/app/backend-htaccess.txt": "Deny-all htaccess — rename to backend/.htaccess on the server"
+    },
+    "production": {
+      "public_html/index.html": "landing page",
+      "public_html/app/index.php": "front controller",
+      "public_html/app/assets/": "built JS/CSS",
+      "public_html/app/backend/": "Laravel app (must have .htaccess deny-all)",
+      "document_root": "public_html"
+    }
+  },
+
+  "architecture": {
+    "two_surfaces": {
+      "merchant_app": "Embedded in Shopify admin at /app/. Auth = Shopify session token (JWT).",
+      "super_admin": "Separate SPA section at /app/admin. Auth = own bearer token. No Shopify involvement."
+    },
+    "routing": {
+      "vite_base": "/app/ in production, / in dev (frontend/vite.config.ts)",
+      "react_router_basename": "derived from import.meta.env.BASE_URL",
+      "api_base": "derived from BASE_URL -> /app/api in production",
+      "spa_catchall": "backend/routes/web.php serves resources/spa/index.html for any non-/api path",
+      "install_prompt": "If no shop context (no ?host, no ?shop, no stored shop) the app shows InstallPrompt instead of the dashboard"
+    },
+    "migration_engine": {
+      "location": "app/backend/app/Migration/",
+      "interface": "Contracts/Migrator",
+      "base_class": "AbstractMigrator — template method enforcing idempotency for every migrator",
+      "registry": "MigratorRegistry — resolves + topologically orders entities by dependency",
+      "job_graph": "StartMigrationJob (plans counts + batches) -> ProcessBatchJob per page, each SELF-ADVANCING to the next via MigrationRunner::advance() -> FinalizeMigrationJob. NOT a Bus chain any more: a chain died at the first failed batch and froze the whole migration.",
+      "resilience": "Batches are resumable (migration_batches.processed_offset) and time-bounded (35s, then re-dispatch a fresh job). Counters are DERIVED from migration_items by MigrationRunner::syncCounters(), never incremented, so a replayed batch cannot inflate progress. `php artisan migration:watchdog` (cron every 5 min) resumes anything that stalled.",
+      "media_failures": "SurvivesMediaFailures trait: a Shopify userError that is ONLY about media makes the migrator retry once without images, so a dead image URL never fails the product/collection (SPECIFICATION.md 6.4). Mixed errors still fail the item.",
+      "idempotency": "migration_items table, unique (shop_id, entity_type, woocommerce_id)",
+      "upsert": "ProductMigrator and CategoryMigrator upsert (update existing, recreate if deleted in Shopify). Others skip if already successful."
+    }
+  },
+
+  "migrators": {
+    "ACTIVE": {
+      "ProductMigrator": "Uses Shopify productSet. Migrates title, description, vendor, productType, status, tags, prices, compareAtPrice, SKU, inventory + tracking, weight (+unit), requiresShipping, variants + options, product AND variant images, metafields, brands, collection links. Variants/images are INLINE here.",
+      "CategoryMigrator": "Woo categories -> Shopify collections (incl. category image). Upserts.",
+      "CustomerMigrator": "Profile + addresses + custom tags. NO passwords (hash incompatible).",
+      "OrderMigrator": "orderCreate: line items, shipping lines, addresses, financial status, historical processedAt, transactions, tags."
+    },
+    "NO_OP_KEPT_FOR_COMPAT": {
+      "AttributeMigrator": "Does nothing — options come from ProductMigrator",
+      "ProductVariationMigrator": "Does nothing — variants are inline in ProductMigrator",
+      "MediaMigrator": "Does nothing — images are inline in ProductMigrator",
+      "why": "These were removed from the wizard UI because selecting them created no-op jobs and inflated estimates. Registry still accepts them so old migrations don't break."
+    },
+    "wizard_entities_shown_to_merchant": ["product", "category", "customer", "order"]
+  },
+
+  "services": {
+    "ShopifyClient": "GraphQL client. Handles 429/THROTTLED, normalizes `errors` (Shopify sometimes returns a STRING not an array), sends variables as object not array, refreshes token before each call.",
+    "ShopifyOAuth": "Shop-domain validation, HMAC verification (OAuth + webhooks), authorize URL, scope diffing (write_X implies read_X).",
+    "ShopifyTokenService": "EXPIRING offline tokens: token exchange (expiring=1), legacy permanent-token migration, refresh_token flow, ensureFresh().",
+    "SessionToken": "Verifies App Bridge JWT (HS256, aud/dest/exp/nbf) with 60s clock-skew leeway.",
+    "ShopifyWebhookRegistrar": "Reconciles webhook subscriptions via GraphQL — UPDATES stale callback URLs instead of duplicating.",
+    "ShopifyBilling": "appSubscriptionCreate, confirmation URL, activate on callback, cancel. Free plans recorded locally without touching Shopify.",
+    "WooCommerceClient": "REST v3 wrapper. Retries only transient failures (never 4xx). X-WP-Total for counts."
+  },
+
+  "database_tables": {
+    "shops": "shopify_domain, access_token(enc), refresh_token(enc), token_expires_at, refresh_token_expires_at, scopes, installed_at, uninstalled_at",
+    "woocommerce_connections": "store_url, consumer_key(enc), consumer_secret(enc), status, wc_version, wp_version",
+    "store_migrations": "NOTE: named store_migrations (NOT migrations — that's Laravel's own table). name, status, selected_entities(json), options(json: custom_tags, default_vendor, weight_unit)",
+    "migration_entities": "per-entity counters (total/processed/successful/failed)",
+    "migration_batches": "one row per chunk/page",
+    "migration_items": "IDEMPOTENCY MAPPING. unique(shop_id, entity_type, woocommerce_id) -> shopify_id",
+    "migration_logs": "info/warning/error per migration",
+    "admin_users": "super admin, api_token_hash (sha256)",
+    "plans": "code, name, price, interval, limits(json), active",
+    "subscriptions": "shop_id, plan_id, status, shopify_charge_id",
+    "support_tickets / ticket_replies": "merchant support with admin replies",
+    "dashboard_contents": "admin-managed content shown in the merchant app",
+    "app_settings": "admin-editable app config. One ENCRYPTED json blob per key (currently 'mail' = SMTP). Overrides .env at boot via MailSettings::apply() in AppServiceProvider."
+  },
+
+  "plans_and_limits": {
+    "source_of_truth": "plans table (DB), editable from /app/admin/plans — no deploy needed",
+    "limit_semantics": {
+      "null": "unlimited",
+      "0": "feature not included in the plan",
+      "number": "hard cap"
+    },
+    "enforcement": "StartMigrationJob caps each entity total to the plan limit and writes a warning to migration_logs. Shop::limitFor() maps entity -> limit key.",
+    "default_plans": {
+      "starter": { "price": 0, "products": 10, "customers": 10, "orders": 0, "metafields": false },
+      "basic": { "price": 19, "products": 2000, "customers": 2000, "orders": 1000, "metafields": true },
+      "pro": { "price": 49, "products": 20000, "customers": 20000, "orders": 20000, "metafields": true },
+      "enterprise": { "price": 149, "products": null, "customers": null, "orders": null, "metafields": true }
+    },
+    "fallback": "A shop with no active subscription automatically gets the 'starter' plan."
+  },
+
+  "frontend_pages": {
+    "merchant": ["Dashboard", "WooCommerceConnection", "NewMigration", "MigrationHistory", "MigrationDetails", "Pricing", "Support", "Settings", "InstallPrompt"],
+    "admin": ["AdminLogin", "AdminOverview", "AdminStores", "AdminStoreDetail", "AdminPlans", "AdminMigrations", "AdminErrors", "AdminTickets", "AdminContent", "AdminSettings"]
+  },
+
+  "plan_gating": {
+    "source": "App\\Support\\PlanAllowance::forEntity() — one verdict per entity",
+    "returned_by": "GET /api/woocommerce/preview (each count carries limit/used/remaining/migratable/locked/exhausted/reason) + a `plan` object",
+    "ui": "NewMigration wizard disables and un-ticks locked/exhausted entities, shows the reason in a banner with a 'View plans' CTA, and the summary shows migratable-of-total",
+    "semantics": {
+      "locked": "limit === 0 — the plan does not include the entity at all",
+      "exhausted": "cap spent AND more source records exist than the cap will ever reach (a fully-migrated store inside the cap is NOT exhausted — re-running refreshes it)",
+      "capped": "count > limit — still selectable, migrates the first `limit`"
+    },
+    "enforcement": "POST /api/migrations returns 422 for locked entities; StartMigrationJob caps totals; ProcessBatchJob slices each page to the remaining allowance"
+  },
+
+  "auth": {
+    "merchant": {
+      "flow": "OAuth at /api/auth -> /api/auth/callback -> embedded admin",
+      "token_type": "EXPIRING offline token (expiring=1). Permanent offline tokens are deprecated by Shopify.",
+      "api_auth": "Authorization: Bearer <App Bridge session token>",
+      "dev_fallback": "X-Shop-Domain header, only in local/testing env",
+      "middleware": "shopify.session -> AuthenticateSessionToken (also auto-exchanges the session token for a fresh offline token)"
+    },
+    "admin": {
+      "login": "POST /api/admin/login (rate limited 5/5min)",
+      "token": "random 64 chars, only sha256 hash stored",
+      "middleware": "admin.auth -> AuthenticateAdmin"
+    },
+    "scopes": "write_products,write_customers,read_products,read_customers,write_inventory,read_orders,write_orders"
+  },
+
+  "known_gotchas": [
+    {
+      "issue": "PowerShell Compress-Archive writes BACKSLASHES into zip entries",
+      "symptom": "Linux extracts files literally named 'assets\\index-x.js'; /assets/* 404s",
+      "fix": "Build zips with Python zipfile using forward slashes (build-prod.bat does this)"
+    },
+    {
+      "issue": "Two different index.php files with the same name",
+      "symptom": "500 on every route: 'Failed to open stream: .../vendor/autoload.php'",
+      "fix": "app/index.php uses ./backend/ paths (production). app/backend/public/index.php uses ../ (local dev). NEVER copy one over the other."
+    },
+    {
+      "issue": "Stale bootstrap/cache after moving folders",
+      "symptom": "500 on every route",
+      "fix": "rm bootstrap/cache/*.php then php artisan config:cache route:cache"
+    },
+    {
+      "issue": ".env change has no effect",
+      "fix": "php artisan config:cache after ANY .env edit"
+    },
+    {
+      "issue": "Migrations stuck at 'pending' forever",
+      "cause": "No queue worker running",
+      "fix": "Cron every minute: cd ~/public_html/app/backend && php artisan queue:work --stop-when-empty --max-time=55"
+    },
+    {
+      "issue": "Polaris `url:` props ignore the router basename",
+      "symptom": "Back buttons 404 at /migrations instead of /app/migrations",
+      "fix": "AppProvider linkComponent routes all internal Polaris links through React Router (main.tsx)"
+    },
+    {
+      "issue": "Session token rejected: not_yet_valid",
+      "cause": "Server clock drift (was 28s behind)",
+      "fix": "60s leeway via SHOPIFY_TOKEN_LEEWAY; also sync the system clock"
+    },
+    {
+      "issue": "Shopify returns `errors` as a STRING sometimes",
+      "symptom": "foreach() argument must be of type array|object, string given",
+      "fix": "ShopifyClient::normalizeErrors()"
+    },
+    {
+      "issue": "Webhook deliveries failing (WEBHOOK_DELIVERY)",
+      "cause": "Subscription registered against an old app URL; REST create returns 422 and was ignored",
+      "fix": "ShopifyWebhookRegistrar reconciles via GraphQL. Run: php artisan shopify:sync-webhooks"
+    },
+    {
+      "issue": "Queue worker caches PHP code in memory",
+      "fix": "Restart the worker after ANY backend code change"
+    },
+    {
+      "issue": "retry_after shorter than a batch => the SAME job runs twice",
+      "symptom": "Progress far ahead of reality (100/112 processed but only 24 collections), failed count = failures x attempts, then the migration freezes at 'processing' with no error and later entities never start",
+      "cause": "config/queue.php retry_after was 90s; a 100-item batch takes longer, so the queue re-reserved it and ran a second copy. Retries ran out -> Bus chain died.",
+      "fix": "retry_after now 900s; batches are resumable + time-bounded; ProcessBatchJob self-advances instead of chaining; counters derived from migration_items. Run migration:watchdog to recover an already-stuck run."
+    },
+    {
+      "issue": "A dead image URL failed the whole product/collection",
+      "symptom": "Store with a deleted /uploads folder migrates nothing — every item errors with 'Image upload failed ... file not found'",
+      "fix": "SurvivesMediaFailures trait retries once without media and records a warning; the record still lands"
+    },
+    {
+      "issue": "Re-running a migration created nothing (all skipped)",
+      "cause": "Mapping said 'already migrated' but products were deleted in Shopify",
+      "fix": "Products/categories now upsert and self-heal (recreate if the Shopify object is gone)"
+    },
+    {
+      "issue": "SSL cert failure on Windows dev (cURL error 60)",
+      "fix": "curl.cainfo + openssl.cafile set in php.ini to a cacert.pem"
+    }
+  ],
+
+  "blockers_to_going_live": [
+    {
+      "item": "Protected Customer Data (PCD) approval",
+      "status": "NOT DONE",
+      "impact": "Customers AND Orders both fail with ACCESS_DENIED until approved",
+      "where": "Partner Dashboard -> app -> Distribution (set first) -> API access requests -> Protected customer data"
+    },
+    {
+      "item": "backend/.htaccess (deny all)",
+      "status": "NOT DONE — /app/backend/composer.json returned 200 publicly",
+      "impact": "Source and vendor readable on the internet"
+    },
+    {
+      "item": "Queue worker cron",
+      "status": "UNKNOWN — verify on server",
+      "impact": "No migration ever progresses without it"
+    },
+    {
+      "item": "SHOPIFY_BILLING_TEST=false",
+      "status": "currently true",
+      "impact": "Merchants are never actually charged while true"
+    },
+    {
+      "item": "Privacy policy page",
+      "status": "NOT CREATED",
+      "impact": "Required for App Store listing"
+    },
+    {
+      "item": "Public WooCommerce test store for the reviewer",
+      "status": "NOT CREATED",
+      "impact": "Reviewer cannot test the app; common rejection reason"
+    }
+  ],
+
+  "not_built_yet": {
+    "high_value_ideas": [
+      "Migration preview / dry-run (show what WILL happen before starting) — highest trust win",
+      "Incremental / delta sync (only migrate what changed) — payload_hash column already exists; justifies subscription",
+      "Rollback / undo a migration (mapping table has every Shopify ID)",
+      "SEO redirects (Woo URLs -> Shopify URLs)",
+      "Scheduled migrations",
+      "Coupons -> Discounts, Reviews, Pages/Blogs"
+    ],
+    "smaller_gaps": [
+      "Order line items are custom lines, not linked to migrated product variants",
+      "Email notifications (setting exists, no delivery)",
+      "Redis + Horizon (currently database queue)",
+      "Some dashboard_contents types have no display surface (useful_link, email_info, other_resource)"
+    ]
+  },
+
+  "commands": {
+    "local_dev_all": "start-dev.bat (backend :8000, queue worker, vite :5173, cloudflared tunnel)",
+    "backend_serve": "cd app/backend && php artisan serve --host=127.0.0.1 --port=8000",
+    "queue_worker": "cd app/backend && php artisan queue:work",
+    "frontend_dev": "cd app/frontend && npm run dev",
+    "tests": "cd app/backend && php artisan test",
+    "typecheck": "cd app/frontend && npx tsc -b",
+    "production_build": "build-prod.bat  (builds frontend, copies SPA shell + assets, makes store-shift-deploy.zip)",
+    "sync_webhooks": "php artisan shopify:sync-webhooks",
+    "resume_stalled_migrations": "php artisan migration:watchdog [--stall=10]  (cron every 5 min in production)",
+    "seed_admin_and_plans": "php artisan db:seed --class=AdminSeeder --force"
+  },
+
+  "testing": {
+    "total_tests": 59,
+    "command": "cd app/backend && php artisan test",
+    "suites": {
+      "MigrationEngineTest": "queue dispatch, dependency ordering, idempotency, custom tags",
+      "MigrationResilienceTest": "a failed batch still advances the run; replaying a batch doesn't inflate counters; resume honours processed_offset; dead image URLs still create the record; the plan cap holds per item, not just at planning",
+      "PlanLimitsTest": "10-product plan really caps at 10; upgrading lifts it; admin limit change applies immediately",
+      "WeightUnitTest": "merchant-selected weight unit reaches Shopify",
+      "ShopifyOAuthTest": "HMAC verification, encrypted token storage, bad HMAC rejected",
+      "SessionTokenTest": "JWT signature/aud/exp validation",
+      "ExpiringTokenTest": "token exchange, legacy migration, refresh",
+      "WebhookRegistrarTest": "stale callback URL is updated, not duplicated",
+      "PlanGatingTest": "preview carries the plan verdict per entity; spent allowance reads as exhausted; a fully-migrated store inside the cap does not; POST /api/migrations 422s a locked entity",
+      "MailSettingsTest": "admin auth required; password never returned; blob encrypted at rest; blank password keeps the stored one; stored settings override .env; no-op when unconfigured",
+      "MetafieldMapperTest": "key sanitisation, type detection",
+      "ShopifyErrorNormalisationTest": "string vs array error shapes"
+    }
+  },
+
+  "secrets_location": {
+    "note": "NEVER store secrets in this file or in git.",
+    "backend_env": "app/backend/.env (local) and app/backend/.env.production (production template)",
+    "frontend_env": "app/frontend/.env / .env.production — VITE_* values are PUBLIC (bundled)",
+    "contains": ["SHOPIFY_API_KEY", "SHOPIFY_API_SECRET", "APP_KEY", "DB_PASSWORD", "ADMIN_PASSWORD"],
+    "gitignored": true,
+    "smtp": "NOT in .env any more (though .env still works as the fallback). Set it at /app/admin/settings — stored encrypted in app_settings and applied at boot."
+  },
+
+  "key_files_to_read_first": [
+    "CLAUDE.md — short guardrails",
+    "SPECIFICATION.md — full architecture spec",
+    "DEPLOYMENT.md — Hostinger deployment steps + troubleshooting table",
+    "APP-LISTING.md — Shopify App Store listing copy",
+    "app/backend/app/Migration/Migrators/ProductMigrator.php — the most complex logic",
+    "app/backend/routes/api.php — every endpoint",
+    "app/frontend/src/App.tsx — routing + surface switching"
+  ]
+}

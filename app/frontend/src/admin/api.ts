@@ -54,6 +54,30 @@ export interface PageMeta {
   has_more: boolean;
 }
 
+export interface MailSettings {
+  host: string | null;
+  port: number;
+  username: string | null;
+  scheme: "smtp" | "smtps";
+  from_address: string | null;
+  from_name: string | null;
+  /** The password is never sent to the client — this only says one exists. */
+  has_password: boolean;
+  /** True once SMTP has been saved here (rather than inherited from .env). */
+  configured: boolean;
+}
+
+export interface MailSettingsInput {
+  host: string;
+  port: number;
+  username: string;
+  /** Blank keeps the stored password. */
+  password: string;
+  scheme: "smtp" | "smtps";
+  from_address: string;
+  from_name: string;
+}
+
 export interface QueueHealth {
   pending_jobs: number;
   failed_jobs: number;
@@ -211,6 +235,15 @@ export const adminApi = {
     }),
   updateTicket: (id: number, data: { status?: string; priority?: string }) =>
     request<Ticket>(`/tickets/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+
+  mailSettings: () => request<MailSettings>("/settings/mail"),
+  saveMailSettings: (data: MailSettingsInput) =>
+    request<MailSettings>("/settings/mail", { method: "PUT", body: JSON.stringify(data) }),
+  testMailSettings: (to: string) =>
+    request<{ sent_to: string }>("/settings/mail/test", {
+      method: "POST",
+      body: JSON.stringify({ to }),
+    }),
 
   content: () => request<{ data: Content[]; types: string[] }>("/content"),
   createContent: (data: Partial<Content>) =>

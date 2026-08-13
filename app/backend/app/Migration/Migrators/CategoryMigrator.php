@@ -3,6 +3,7 @@
 namespace App\Migration\Migrators;
 
 use App\Migration\AbstractMigrator;
+use App\Migration\Concerns\SurvivesMediaFailures;
 use App\Migration\MigrationItemResult;
 use App\Models\StoreMigration;
 use App\Models\WoocommerceConnection;
@@ -10,6 +11,8 @@ use App\Services\WooCommerceClient;
 
 class CategoryMigrator extends AbstractMigrator
 {
+    use SurvivesMediaFailures;
+
     private const CREATE_MUTATION = <<<'GQL'
     mutation collectionCreate($input: CollectionInput!) {
       collectionCreate(input: $input) {
@@ -65,14 +68,19 @@ class CategoryMigrator extends AbstractMigrator
             ];
         }
 
-        // Update the existing collection when we have one; recreate if it's gone.
-        if ($existingShopifyId) {
-            $id = $this->run($migration, self::UPDATE_MUTATION, 'collectionUpdate', $input + ['id' => $existingShopifyId]);
-            if ($id === null) {
-                $id = $this->run($migration, self::CREATE_MUTATION, 'collectionCreate', $input);
+        $id = $this->write($migration, $input, $existingShopifyId);
+
+        // A category image that no longer exists at the source must not cost us the
+        // collection — drop the image and keep the category.
+        if (is_array($id) && isset($input['image']) && $this->isMediaOnlyError($id)) {
+            $warning = $this->mediaWarning($id);
+            unset($input['image']);
+
+            $retried = $this->write($migration, $input, $existingShopifyId);
+
+            if (is_string($retried) && $retried !== '') {
+                return MigrationItemResult::successWithWarning($retried, $warning);
             }
-        } else {
-            $id = $this->run($migration, self::CREATE_MUTATION, 'collectionCreate', $input);
         }
 
         if (is_array($id)) {
@@ -82,6 +90,20 @@ class CategoryMigrator extends AbstractMigrator
         return $id
             ? MigrationItemResult::success($id)
             : MigrationItemResult::failed('No collection id returned by Shopify');
+    }
+
+    /** Update the existing collection when we have one; recreate if it's gone. */
+    private function write(StoreMigration $migration, array $input, ?string $existingShopifyId): string|array|null
+    {
+        if (! $existingShopifyId) {
+            return $this->run($migration, self::CREATE_MUTATION, 'collectionCreate', $input);
+        }
+
+        $id = $this->run($migration, self::UPDATE_MUTATION, 'collectionUpdate', $input + ['id' => $existingShopifyId]);
+
+        return $id === null
+            ? $this->run($migration, self::CREATE_MUTATION, 'collectionCreate', $input)
+            : $id;
     }
 
     /** Returns gid on success, errors array on real failure, null if the target collection is gone. */

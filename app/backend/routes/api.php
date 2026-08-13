@@ -4,6 +4,7 @@ use App\Http\Controllers\Admin\AdminAuthController;
 use App\Http\Controllers\Admin\AdminContentController;
 use App\Http\Controllers\Admin\AdminMigrationController;
 use App\Http\Controllers\Admin\AdminPlanController;
+use App\Http\Controllers\Admin\AdminSettingsController;
 use App\Http\Controllers\Admin\AdminStoreController;
 use App\Http\Controllers\Admin\AdminTicketController;
 use App\Http\Controllers\Auth\ShopifyOAuthController;
@@ -89,6 +90,11 @@ Route::prefix('admin')->group(function () {
         Route::get('/tickets/{id}', [AdminTicketController::class, 'show']);
         Route::post('/tickets/{id}/reply', [AdminTicketController::class, 'reply']);
         Route::patch('/tickets/{id}', [AdminTicketController::class, 'update']);
+
+        // Application settings (SMTP) — DB-backed, not .env.
+        Route::get('/settings/mail', [AdminSettingsController::class, 'mail']);
+        Route::put('/settings/mail', [AdminSettingsController::class, 'updateMail']);
+        Route::post('/settings/mail/test', [AdminSettingsController::class, 'testMail']);
 
         // Dashboard content management
         Route::get('/content', [AdminContentController::class, 'index']);

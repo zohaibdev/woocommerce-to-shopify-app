@@ -84,7 +84,20 @@ export interface WooConnection {
 
 export interface EntityCount {
   type: string;
+  /** How many records exist in WooCommerce. */
   count: number;
+  /** Plan cap: null = unlimited, 0 = the entity is not in the plan at all. */
+  limit: number | null;
+  /** Already migrated successfully for this shop. */
+  used: number;
+  remaining: number | null;
+  /** How many this run would actually migrate (count capped by the plan). */
+  migratable: number;
+  /** The plan does not include this entity. */
+  locked: boolean;
+  /** The cap is spent and there is still source data it can never reach. */
+  exhausted: boolean;
+  reason: string | null;
 }
 
 export interface EntityProgress {
@@ -183,7 +196,10 @@ export const api = {
 
   testWoo: () => request<WooConnection>("/woocommerce/test", { method: "POST" }),
 
-  preview: () => request<{ counts: EntityCount[] }>("/woocommerce/preview"),
+  preview: () =>
+    request<{ counts: EntityCount[]; plan: { code: string; name: string } | null }>(
+      "/woocommerce/preview",
+    ),
 
   listMigrations: (page = 1, perPage = 10) =>
     request<{ data: Migration[]; meta: PageMeta }>(
@@ -195,6 +211,7 @@ export const api = {
     customTags?: string[];
     defaultVendor?: string;
     name?: string;
+    weightUnit?: string;
   }) =>
     request<Migration>("/migrations", {
       method: "POST",
@@ -203,6 +220,7 @@ export const api = {
         custom_tags: opts.customTags ?? [],
         default_vendor: opts.defaultVendor ?? "",
         name: opts.name ?? "",
+        weight_unit: opts.weightUnit ?? "KILOGRAMS",
       }),
     }),
 

@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Services\MailSettings;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -19,6 +20,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        // SMTP is configured from the admin panel, not .env (shared hosting gives
+        // the super admin no way to edit .env). No-ops when nothing is stored.
+        MailSettings::apply();
     }
 }

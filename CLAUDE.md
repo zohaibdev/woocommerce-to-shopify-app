@@ -1,5 +1,10 @@
 # CLAUDE.md — Store Shift (WooCommerce → Shopify Migration App)
 
+> **START HERE:** read **[PROJECT-CONTEXT.json](PROJECT-CONTEXT.json)** first. It is the
+> machine-readable snapshot of everything built so far — architecture, folder layout,
+> migrators, plans/limits, auth, known gotchas, live blockers and commands. It exists so a
+> new session doesn't have to re-explore the codebase.
+
 Read **[SPECIFICATION.md](SPECIFICATION.md)** before doing any work. It is the source of truth for architecture, schema, API contracts, and phases. This file is the short guardrail list.
 
 ## What this project is

@@ -3,6 +3,7 @@
 namespace App\Migration\Migrators;
 
 use App\Migration\AbstractMigrator;
+use App\Migration\Concerns\SurvivesMediaFailures;
 use App\Migration\MetafieldMapper;
 use App\Migration\MigrationItemResult;
 use App\Models\StoreMigration;
@@ -17,6 +18,8 @@ use App\Models\WoocommerceConnection;
  */
 class ProductMigrator extends AbstractMigrator
 {
+    use SurvivesMediaFailures;
+
     private const SET_MUTATION = <<<'GQL'
     mutation productSet($input: ProductSetInput!) {
       productSet(input: $input, synchronous: true) {
@@ -28,6 +31,12 @@ class ProductMigrator extends AbstractMigrator
 
     /** Memoised primary location id per shop (for inventory quantities). */
     private static array $locationCache = [];
+
+    /**
+     * Weight unit for this run. WooCommerce doesn't report its unit through the
+     * REST API, so the merchant picks it per migration (falling back to config).
+     */
+    private string $weightUnit = 'KILOGRAMS';
 
     public function entityType(): string
     {
@@ -61,6 +70,10 @@ class ProductMigrator extends AbstractMigrator
 
     protected function doMigrate(StoreMigration $migration, array $woo, ?string $existingShopifyId = null): MigrationItemResult
     {
+        // Merchant-selected unit for this migration, else the configured default.
+        $this->weightUnit = $migration->options['weight_unit']
+            ?? config('migration.weight_unit', 'KILOGRAMS');
+
         $locationId = $this->primaryLocationId($migration);
 
         $metafields = $this->metafields($migration, $woo);
@@ -112,6 +125,17 @@ class ProductMigrator extends AbstractMigrator
             $result = $this->runSet($migration, $input);
         }
 
+        // Images Shopify could not download must not cost us the product itself.
+        // Retry once with every file stripped, then flag what went missing.
+        if (is_array($result) && $this->isMediaOnlyError($result)) {
+            $warning = $this->mediaWarning($result);
+            $retried = $this->runSet($migration, $this->withoutMedia($input));
+
+            if (is_string($retried) && $retried !== '') {
+                return MigrationItemResult::successWithWarning($retried, $warning);
+            }
+        }
+
         if (is_array($result)) {
             return MigrationItemResult::failed(json_encode($result));
         }
@@ -119,6 +143,18 @@ class ProductMigrator extends AbstractMigrator
         return $result
             ? MigrationItemResult::success($result)
             : MigrationItemResult::failed('No product id returned by Shopify');
+    }
+
+    /** The same productSet input with all product and variant media removed. */
+    private function withoutMedia(array $input): array
+    {
+        unset($input['files']);
+
+        foreach ($input['variants'] ?? [] as $i => $variant) {
+            unset($input['variants'][$i]['file']);
+        }
+
+        return $input;
     }
 
     /**
@@ -259,7 +295,7 @@ class ProductMigrator extends AbstractMigrator
         }
 
         return ['weight' => [
-            'unit' => config('migration.weight_unit', 'KILOGRAMS'),
+            'unit' => $this->weightUnit,
             'value' => (float) $weight,
         ]];
     }

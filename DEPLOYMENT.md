@@ -102,6 +102,28 @@ hPanel → **Advanced → Cron Jobs** → every minute (`* * * * *`):
 cd ~/public_html/app/backend && php artisan queue:work --stop-when-empty --max-time=55
 ```
 
+### 6.1 Watchdog cron (REQUIRED)
+
+Second cron, every 5 minutes (`*/5 * * * *`). This is the guarantee that a run can
+never freeze: it resumes any migration that has stopped making progress (worker
+OOM-killed, host rebooted mid-job, a lost queue row) and closes out runs whose
+batches all finished.
+
+```bash
+cd ~/public_html/app/backend && php artisan migration:watchdog
+```
+
+> A batch is only considered stalled after 10 minutes without progress. Override
+> with `--stall=<minutes>` (minimum 2) to recover a stuck run sooner.
+
+### 6.2 `retry_after` must exceed the job runtime ⚠️
+
+`config/queue.php` sets `retry_after` to **900s**. It was 90s, which was shorter
+than a full batch — so the queue declared the job dead mid-run and started a
+second copy of it. That replay double-counted every item and, once retries ran
+out, killed the job chain and froze the migration at *processing* with no error.
+Never set `DB_QUEUE_RETRY_AFTER` below ~600.
+
 ---
 
 ## 7. Shopify Partner Dashboard
@@ -165,5 +187,7 @@ Admin panel: `https://shift-shop.webnday.com/app/admin`
 | Blank page / 500 | `storage/` not writable → `chmod -R 775 storage` |
 | API 401 everywhere | `.htaccess` missing → `Authorization` header stripped |
 | Migration stuck *pending* | Queue cron (§6) not running |
+| Migration stuck *processing*, no errors | Watchdog cron (§6.1) not running — run `php artisan migration:watchdog --stall=2` |
+| Progress % higher than reality | Stale deploy: needs `retry_after` ≥ 600 (§6.2) + `php artisan config:cache` |
 | `.env` edit ignored | Run `php artisan config:cache` |
 | `backend/composer.json` returns 200 | `backend/.htaccess` missing or still named `.txt` |

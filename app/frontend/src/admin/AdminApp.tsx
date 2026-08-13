@@ -8,6 +8,7 @@ import {
   ChatIcon,
   ContentIcon,
   CreditCardIcon,
+  SettingsIcon,
 } from "@shopify/polaris-icons";
 import { Routes, Route, useNavigate, useLocation } from "react-router-dom";
 import { adminApi, adminToken } from "./api";
@@ -20,6 +21,7 @@ import AdminErrors from "./pages/AdminErrors";
 import AdminTickets from "./pages/AdminTickets";
 import AdminContent from "./pages/AdminContent";
 import AdminPlans from "./pages/AdminPlans";
+import AdminSettings from "./pages/AdminSettings";
 
 export default function AdminApp() {
   const navigate = useNavigate();
@@ -68,6 +70,7 @@ export default function AdminApp() {
           item("Error logs", "/admin/errors", AlertCircleIcon),
           item("Support tickets", "/admin/tickets", ChatIcon),
           item("Dashboard content", "/admin/content", ContentIcon),
+          item("Settings", "/admin/settings", SettingsIcon),
         ]}
       />
       <Navigation.Section
@@ -102,6 +105,7 @@ export default function AdminApp() {
         <Route path="/admin/errors" element={<AdminErrors />} />
         <Route path="/admin/tickets" element={<AdminTickets />} />
         <Route path="/admin/content" element={<AdminContent />} />
+        <Route path="/admin/settings" element={<AdminSettings />} />
       </Routes>
     </Frame>
   );
