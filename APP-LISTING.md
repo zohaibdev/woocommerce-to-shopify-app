@@ -343,16 +343,15 @@ see the standard Shopify approval screen.
 
 ## Still to do before submitting
 
-1. **Fill in the legal placeholders.** `/privacy/` and `/terms/` contain
-   `[LEGAL ENTITY NAME]`, `[REGISTERED ADDRESS]` and `[JURISDICTION]`. Shopify
-   reviewers read these pages — placeholders in a live policy look unfinished.
-
-2. **Create `support@webnday.com`.** Every public page, both policies
+1. **Create `support@webnday.com`.** Every public page, both policies
    and this listing point at it, and the reviewer may email it.
 
-3. **A public WooCommerce test store** — the reviewer has no way to test
+2. **A public WooCommerce test store** — the reviewer has no way to test
    otherwise. A cheap shared-host WordPress with the WooCommerce sample data
    import is enough.
 
-4. **Protected Customer Data approval** — customers and orders fail until it is
+3. **Protected Customer Data approval** — customers and orders fail until it is
    granted.
+
+> Legal entity across all public pages: **Webnday Pvt. Ltd**, with Store Shift as
+> its product. No registered address or named jurisdiction is published.

@@ -279,7 +279,7 @@
     {
       "item": "Privacy policy page",
       "status": "DONE — /privacy/ (also /terms/, /refund/, /contact/, /developers/)",
-      "impact": "Placeholders [LEGAL ENTITY NAME], [REGISTERED ADDRESS] and [JURISDICTION] must be filled in before submission"
+      "impact": "Legal entity on all public pages is 'Webnday Pvt. Ltd', with Store Shift as its product. No registered address or named jurisdiction is published — governing law refers to the jurisdiction in which Webnday Pvt. Ltd is registered."
     },
     {
       "item": "support@webnday.com mailbox",
