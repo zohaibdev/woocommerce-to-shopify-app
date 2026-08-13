@@ -14,6 +14,7 @@ import {
   SkeletonBodyText,
   SkeletonDisplayText,
   Badge,
+  Checkbox,
 } from "@shopify/polaris";
 import { useNavigate } from "react-router-dom";
 import { api, type EntityCount } from "../api/client";
@@ -63,6 +64,8 @@ export default function NewMigration() {
   const [weightUnit, setWeightUnit] = useState(prefs.weightUnit);
   const [counts, setCounts] = useState<EntityCount[]>([]);
   const [planName, setPlanName] = useState<string | null>(null);
+  const [notifyMe, setNotifyMe] = useState(prefs.emailNotifications);
+  const [notifyEmail, setNotifyEmail] = useState("");
   const [loadingCounts, setLoadingCounts] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -70,9 +73,10 @@ export default function NewMigration() {
   useEffect(() => {
     api
       .preview()
-      .then(({ counts, plan }) => {
+      .then(({ counts, plan, shop_email }) => {
         setCounts(counts);
         setPlanName(plan?.name ?? null);
+        if (shop_email) setNotifyEmail(shop_email);
 
         // Only pre-tick what the merchant can actually run — a checkbox that is
         // on by default but rejected on submit is worse than one that is off.
@@ -139,6 +143,7 @@ export default function NewMigration() {
         defaultVendor: defaultVendor.trim(),
         name: name.trim(),
         weightUnit,
+        notifyEmail: notifyMe ? notifyEmail.trim() : "",
       });
       navigate(`/migrations/${migration.id}`);
     } catch (e) {
@@ -264,6 +269,25 @@ export default function NewMigration() {
                 helpText="Vendor for products with no brand in WooCommerce. Blank = Shopify uses the shop name."
                 autoComplete="off"
               />
+              <Divider />
+              <BlockStack gap="200">
+                <Checkbox
+                  label="Email me when this migration finishes"
+                  checked={notifyMe}
+                  onChange={setNotifyMe}
+                  helpText="Large migrations can take hours — you don't have to keep this page open."
+                />
+                {notifyMe && (
+                  <TextField
+                    label="Send to"
+                    type="email"
+                    value={notifyEmail}
+                    onChange={setNotifyEmail}
+                    placeholder="you@example.com"
+                    autoComplete="email"
+                  />
+                )}
+              </BlockStack>
               <InlineStack align="end">
                 <Button
                   variant="primary"

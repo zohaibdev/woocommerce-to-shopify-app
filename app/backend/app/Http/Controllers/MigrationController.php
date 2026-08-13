@@ -5,7 +5,9 @@ namespace App\Http\Controllers;
 use App\Jobs\RetryFailedItemsJob;
 use App\Jobs\StartMigrationJob;
 use App\Migration\MigratorRegistry;
+use App\Models\MigrationEntity;
 use App\Models\MigrationItem;
+use App\Models\MigrationLog;
 use App\Models\StoreMigration;
 use App\Support\CurrentShop;
 use App\Support\PlanAllowance;
@@ -49,6 +51,9 @@ class MigrationController extends Controller
             'default_vendor' => ['sometimes', 'nullable', 'string', 'max:255'],
             'name' => ['sometimes', 'nullable', 'string', 'max:120'],
             'weight_unit' => ['sometimes', 'in:KILOGRAMS,GRAMS,POUNDS,OUNCES'],
+            // Migrations can run for hours; the merchant can ask to be told when
+            // this one is done instead of watching the page.
+            'notify_email' => ['sometimes', 'nullable', 'email', 'max:255'],
         ]);
 
         // Normalise custom tags (accept comma-separated strings too).
@@ -93,8 +98,19 @@ class MigrationController extends Controller
                 // WooCommerce doesn't expose its weight unit, so the merchant picks it.
                 'weight_unit' => $request->input('weight_unit')
                     ?: config('migration.weight_unit', 'KILOGRAMS'),
+                'notify_email' => trim((string) $request->input('notify_email', '')) ?: null,
             ],
         ]);
+
+        // Write the entity rows up front so the details page has something to draw
+        // immediately. Planning has to make a WooCommerce count call per entity, and
+        // until it finished the merchant saw an empty card and assumed it had hung.
+        foreach ($registry->order($entities) as $entityType) {
+            MigrationEntity::firstOrCreate(
+                ['migration_id' => $migration->id, 'entity_type' => $entityType],
+                ['status' => 'pending', 'total_items' => 0],
+            );
+        }
 
         // Enqueue — migrations NEVER run in the request lifecycle.
         StartMigrationJob::dispatch($migration->id);
@@ -122,6 +138,33 @@ class MigrationController extends Controller
         }
 
         return response()->json(['data' => $query->limit(500)->get()]);
+    }
+
+    /**
+     * Live activity log. SPECIFICATION.md §7 listed this endpoint but it was never
+     * built, so a merchant watching a run had no way to see what was happening —
+     * the log only existed inside the downloadable report.
+     */
+    public function logs(Request $request, int $id): JsonResponse
+    {
+        $migration = $this->find($request, $id);
+
+        $limit = min(200, max(10, (int) $request->query('limit', 100)));
+
+        $logs = MigrationLog::where('migration_id', $migration->id)
+            ->when($request->filled('after'), fn ($q) => $q->where('id', '>', (int) $request->query('after')))
+            ->orderByDesc('id')
+            ->limit($limit)
+            ->get()
+            ->map(fn (MigrationLog $l) => [
+                'id' => $l->id,
+                'level' => $l->level,
+                'entity_type' => $l->entity_type,
+                'message' => $l->message,
+                'created_at' => $l->created_at,
+            ]);
+
+        return response()->json(['data' => $logs->values()]);
     }
 
     public function cancel(Request $request, int $id): JsonResponse

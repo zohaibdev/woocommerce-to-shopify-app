@@ -76,7 +76,8 @@
       "registry": "MigratorRegistry — resolves + topologically orders entities by dependency",
       "job_graph": "StartMigrationJob (plans counts + batches) -> ProcessBatchJob per page, each SELF-ADVANCING to the next via MigrationRunner::advance() -> FinalizeMigrationJob. NOT a Bus chain any more: a chain died at the first failed batch and froze the whole migration.",
       "resilience": "Batches are resumable (migration_batches.processed_offset) and time-bounded (35s, then re-dispatch a fresh job). Counters are DERIVED from migration_items by MigrationRunner::syncCounters(), never incremented, so a replayed batch cannot inflate progress. `php artisan migration:watchdog` (cron every 5 min) resumes anything that stalled.",
-      "media_failures": "SurvivesMediaFailures trait: a Shopify userError that is ONLY about media makes the migrator retry once without images, so a dead image URL never fails the product/collection (SPECIFICATION.md 6.4). Mixed errors still fail the item.",
+      "field_shedding": "ShedsRejectedFields trait (replaces the old SurvivesMediaFailures/SurvivesFieldRejections). On a userError the migrator drops the OPTIONAL field Shopify complained about and retries, up to 3 rounds, then records the record with a warning naming what was left behind. Required fields are never shed and a MIXED error set still fails the item, so real problems stay visible. Per-migrator optional lists: product = files/metafields/collections/tags/vendor/productType/descriptionHtml; category = image/descriptionHtml; customer = phone/addresses/tags; order = transactions/shippingAddress/billingAddress/shippingLines/tags/note/processedAt.",
+      "media_short_circuit": "After 5 products have their images rejected in one run, ProductMigrator stops sending images entirely for that migration (cache flag migration:{id}:media_unreachable) — halves the Shopify calls on a store whose /uploads is gone, and logs a warning explaining it.",
       "idempotency": "migration_items table, unique (shop_id, entity_type, woocommerce_id)",
       "upsert": "ProductMigrator and CategoryMigrator upsert (update existing, recreate if deleted in Shopify). Others skip if already successful."
     }
@@ -230,6 +231,12 @@
       "fix": "retry_after now 900s; batches are resumable + time-bounded; ProcessBatchJob self-advances instead of chaining; counters derived from migration_items. Run migration:watchdog to recover an already-stuck run."
     },
     {
+      "issue": "WooCommerce phone numbers are rejected by Shopify",
+      "symptom": "[{\"field\":[\"phone\"],\"message\":\"Phone is invalid\"}] — every customer fails",
+      "cause": "Woo stores whatever the shopper typed ('0300 1234567'); Shopify wants E.164",
+      "fix": "App\\Support\\PhoneNumber::toE164() uses the billing COUNTRY to supply the calling code and strips the national trunk zero (Italy keeps it). If Shopify still rejects it, SurvivesFieldRejections drops the phone and keeps the customer, with a warning. Also covers 'Phone has already been taken'."
+    },
+    {
       "issue": "A dead image URL failed the whole product/collection",
       "symptom": "Store with a deleted /uploads folder migrates nothing — every item errors with 'Image upload failed ... file not found'",
       "fix": "SurvivesMediaFailures trait retries once without media and records a warning; the record still lands"
@@ -290,7 +297,6 @@
     ],
     "smaller_gaps": [
       "Order line items are custom lines, not linked to migrated product variants",
-      "Email notifications (setting exists, no delivery)",
       "Redis + Horizon (currently database queue)",
       "Some dashboard_contents types have no display surface (useful_link, email_info, other_resource)"
     ]
@@ -310,7 +316,7 @@
   },
 
   "testing": {
-    "total_tests": 59,
+    "total_tests": 110,
     "command": "cd app/backend && php artisan test",
     "suites": {
       "MigrationEngineTest": "queue dispatch, dependency ordering, idempotency, custom tags",
@@ -321,6 +327,10 @@
       "SessionTokenTest": "JWT signature/aud/exp validation",
       "ExpiringTokenTest": "token exchange, legacy migration, refresh",
       "WebhookRegistrarTest": "stale callback URL is updated, not duplicated",
+      "FieldSheddingTest": "each migrator drops the rejected optional field and survives; several bad fields shed in turn; required-field and mixed-error rejections still fail; media short-circuit stops the wasted retry",
+      "PhoneNumberTest": "E.164 across US/CA/GB/DE/FR/AU/AE/IN/PK, non-zero trunk prefixes (RU/KZ/LT 8, HU 06), extension stripping, and unusable input returning null",
+      "MigrationNotificationTest": "completion email sent only when asked; subject reflects the outcome; a dead SMTP server never undoes a finished migration",
+      "MigrationVisibilityTest": "entity rows exist at creation; counters written mid-batch; the merchant log endpoint is shop-scoped",
       "PlanGatingTest": "preview carries the plan verdict per entity; spent allowance reads as exhausted; a fully-migrated store inside the cap does not; POST /api/migrations 422s a locked entity",
       "MailSettingsTest": "admin auth required; password never returned; blob encrypted at rest; blank password keeps the stored one; stored settings override .env; no-op when unconfigured",
       "MetafieldMapperTest": "key sanitisation, type detection",

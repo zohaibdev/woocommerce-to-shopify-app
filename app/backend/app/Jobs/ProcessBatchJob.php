@@ -43,6 +43,9 @@ class ProcessBatchJob implements ShouldQueue
      */
     private const TIME_BUDGET_SECONDS = 35;
 
+    /** How often progress counters are republished while a chunk runs. */
+    private const COUNTER_SYNC_SECONDS = 1.0;
+
     public function __construct(public int $batchId) {}
 
     /** Backoff between retries of a hard failure (e.g. WooCommerce unreachable). */
@@ -103,6 +106,7 @@ class ProcessBatchJob implements ShouldQueue
         $items = array_slice($items, (int) $batch->processed_offset);
 
         $startedAt = microtime(true);
+        $lastSync = 0.0; // 0 so the first item always publishes progress immediately
 
         foreach ($items as $wooItem) {
             if ($migration->isCancelledOrPaused()) {
@@ -117,7 +121,6 @@ class ProcessBatchJob implements ShouldQueue
                 // Wait out the throttle window in a fresh job so this doesn't burn
                 // an attempt. The saved offset means we resume, not restart.
                 $batch->update(['status' => 'pending']);
-                MigrationRunner::syncCounters($migration, $entity);
                 self::dispatch($batch->id)->delay((int) ceil($e->retryAfterSeconds));
 
                 return;
@@ -133,7 +136,17 @@ class ProcessBatchJob implements ShouldQueue
 
             $this->recordResult($migration, $batch->entity_type, $wooId, $result);
 
-            if (microtime(true) - $startedAt >= self::TIME_BUDGET_SECONDS) {
+            // Keep progress live without a counter query per item. Syncing only at
+            // the end of a chunk left the merchant staring at a frozen 0/10 for
+            // half a minute; syncing every item costs a query per row on fast
+            // entities. Once a second is smoother than the 3s UI poll either way.
+            $now = microtime(true);
+            if ($now - $lastSync >= self::COUNTER_SYNC_SECONDS) {
+                MigrationRunner::syncCounters($migration, $entity);
+                $lastSync = $now;
+            }
+
+            if ($now - $startedAt >= self::TIME_BUDGET_SECONDS) {
                 $batch->update(['status' => 'pending']);
                 MigrationRunner::syncCounters($migration, $entity);
                 self::dispatch($batch->id);

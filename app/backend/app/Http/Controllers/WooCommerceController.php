@@ -76,6 +76,8 @@ class WooCommerceController extends Controller
         return response()->json([
             'counts' => $counts,
             'plan' => $plan ? ['code' => $plan->code, 'name' => $plan->name] : null,
+            // Prefills the "email me when it's done" field in the wizard.
+            'shop_email' => $shop->email,
         ]);
     }
 

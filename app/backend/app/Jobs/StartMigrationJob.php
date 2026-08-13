@@ -49,6 +49,10 @@ class StartMigrationJob implements ShouldQueue
         $ordered = $registry->order($migration->selected_entities);
         $shop = $migration->shop;
 
+        // Counting is several WooCommerce round-trips before any progress bar can
+        // move. Say so, otherwise the first minute looks like a dead page.
+        MigrationRunner::log($migration->id, 'info', null, 'Reading your WooCommerce store…');
+
         foreach ($ordered as $entityType) {
             $migrator = $registry->make($entityType);
 
@@ -89,6 +93,15 @@ class StartMigrationJob implements ShouldQueue
             MigrationEntity::updateOrCreate(
                 ['migration_id' => $migration->id, 'entity_type' => $entityType],
                 ['status' => $total > 0 ? 'processing' : 'completed', 'total_items' => $total],
+            );
+
+            MigrationRunner::log(
+                $migration->id,
+                'info',
+                $entityType,
+                $total > 0
+                    ? "Found {$available} {$entityType} records — migrating {$total}."
+                    : "Nothing to migrate for {$entityType}.",
             );
 
             if ($total <= 0) {

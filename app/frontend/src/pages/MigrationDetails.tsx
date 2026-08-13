@@ -11,9 +11,10 @@ import {
   Banner,
   DataTable,
   Spinner,
+  Box,
 } from "@shopify/polaris";
 import { useParams } from "react-router-dom";
-import { api, type Migration, type MigrationItem } from "../api/client";
+import { api, type Migration, type MigrationItem, type MigrationLogEntry } from "../api/client";
 
 const ACTIVE_STATES = ["pending", "processing", "paused"];
 
@@ -22,13 +23,18 @@ export default function MigrationDetails() {
   const migrationId = Number(id);
   const [migration, setMigration] = useState<Migration | null>(null);
   const [failedItems, setFailedItems] = useState<MigrationItem[]>([]);
+  const [logs, setLogs] = useState<MigrationLogEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const timer = useRef<number | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const m = await api.getMigration(migrationId);
+      const [m, { data: logEntries }] = await Promise.all([
+        api.getMigration(migrationId),
+        api.getLogs(migrationId).catch(() => ({ data: [] as MigrationLogEntry[] })),
+      ]);
       setMigration(m);
+      setLogs(logEntries);
       if (!ACTIVE_STATES.includes(m.status)) {
         if (timer.current) window.clearInterval(timer.current);
         if (m.status === "completed_with_errors" || m.status === "failed") {
@@ -106,6 +112,13 @@ export default function MigrationDetails() {
           </BlockStack>
         </Card>
 
+        {migration.status === "pending" && (
+          <Banner tone="info" title="Queued — waiting for a worker">
+            Migrations run on a background queue that is checked periodically, so there can be a
+            short delay before the first numbers move. You can close this page; the run continues.
+          </Banner>
+        )}
+
         <Card>
           <BlockStack gap="400">
             {migration.entities.map((e) => (
@@ -115,12 +128,53 @@ export default function MigrationDetails() {
                     {e.type}
                   </Text>
                   <Text as="span" tone="subdued">
-                    {e.processed}/{e.total} · {e.successful} ok · {e.failed} failed
+                    {e.total === 0 && isActive
+                      ? "counting…"
+                      : `${e.processed}/${e.total} · ${e.successful} ok · ${e.failed} failed`}
                   </Text>
                 </InlineStack>
                 <ProgressBar progress={e.percentage} size="small" />
               </BlockStack>
             ))}
+          </BlockStack>
+        </Card>
+
+        <Card>
+          <BlockStack gap="300">
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h2" variant="headingMd">
+                Activity
+              </Text>
+              {isActive && <Spinner accessibilityLabel="Migration running" size="small" />}
+            </InlineStack>
+
+            {logs.length === 0 ? (
+              <Text as="p" tone="subdued">
+                {isActive ? "Waiting for the first update…" : "Nothing was logged for this run."}
+              </Text>
+            ) : (
+              <BlockStack gap="150">
+                {logs.map((l) => (
+                  <InlineStack key={l.id} gap="200" blockAlign="start" wrap={false}>
+                    <Box minWidth="64px">
+                      <Text as="span" variant="bodySm" tone="subdued">
+                        {new Date(l.created_at).toLocaleTimeString()}
+                      </Text>
+                    </Box>
+                    <Text
+                      as="span"
+                      variant="bodySm"
+                      tone={
+                        l.level === "error" ? "critical" : l.level === "warning" ? "caution" : "subdued"
+                      }
+                    >
+                      {l.entity_type ? `${l.entity_type}: ` : ""}
+                      {l.message}
+                    </Text>
+                  </InlineStack>
+                ))}
+              </BlockStack>
+            )}
           </BlockStack>
         </Card>
 

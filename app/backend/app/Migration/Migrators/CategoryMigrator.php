@@ -3,7 +3,7 @@
 namespace App\Migration\Migrators;
 
 use App\Migration\AbstractMigrator;
-use App\Migration\Concerns\SurvivesMediaFailures;
+use App\Migration\Concerns\ShedsRejectedFields;
 use App\Migration\MigrationItemResult;
 use App\Models\StoreMigration;
 use App\Models\WoocommerceConnection;
@@ -11,7 +11,7 @@ use App\Services\WooCommerceClient;
 
 class CategoryMigrator extends AbstractMigrator
 {
-    use SurvivesMediaFailures;
+    use ShedsRejectedFields;
 
     private const CREATE_MUTATION = <<<'GQL'
     mutation collectionCreate($input: CollectionInput!) {
@@ -68,28 +68,18 @@ class CategoryMigrator extends AbstractMigrator
             ];
         }
 
-        $id = $this->write($migration, $input, $existingShopifyId);
+        // A category image that no longer exists at the source, or a description
+        // Shopify won't take, must not cost us the collection. The title stays
+        // required — a collection without one is meaningless.
+        return $this->writeSheddingBadFields(
+            function (array $attempt) use ($migration, $existingShopifyId) {
+                $id = $this->write($migration, $attempt, $existingShopifyId);
 
-        // A category image that no longer exists at the source must not cost us the
-        // collection — drop the image and keep the category.
-        if (is_array($id) && isset($input['image']) && $this->isMediaOnlyError($id)) {
-            $warning = $this->mediaWarning($id);
-            unset($input['image']);
-
-            $retried = $this->write($migration, $input, $existingShopifyId);
-
-            if (is_string($retried) && $retried !== '') {
-                return MigrationItemResult::successWithWarning($retried, $warning);
-            }
-        }
-
-        if (is_array($id)) {
-            return MigrationItemResult::failed(json_encode($id));
-        }
-
-        return $id
-            ? MigrationItemResult::success($id)
-            : MigrationItemResult::failed('No collection id returned by Shopify');
+                return is_array($id) ? [null, $id] : [$id, []];
+            },
+            $input,
+            ['image', 'descriptionHtml'],
+        );
     }
 
     /** Update the existing collection when we have one; recreate if it's gone. */

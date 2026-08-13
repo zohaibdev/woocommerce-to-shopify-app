@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Mail\MigrationCompleted;
 use App\Migration\MigrationRunner;
 use App\Models\MigrationBatch;
 use App\Models\StoreMigration;
@@ -10,6 +11,8 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Mail;
+use Throwable;
 
 /**
  * Rolls up the final status once no batches are outstanding. Idempotent, and it
@@ -68,5 +71,34 @@ class FinalizeMigrationJob implements ShouldQueue
             null,
             "Migration finished: {$successfulItems} migrated, {$failedItems} failed.",
         );
+
+        $this->notify($migration);
+    }
+
+    /**
+     * Migrations can run for hours, so the merchant asks to be told when it is
+     * done rather than watching the page. Never let a mail problem (bad SMTP,
+     * unreachable host) undo a finished migration.
+     */
+    private function notify(StoreMigration $migration): void
+    {
+        $email = $migration->options['notify_email'] ?? null;
+
+        if (! $email) {
+            return;
+        }
+
+        try {
+            Mail::to($email)->send(new MigrationCompleted($migration));
+
+            MigrationRunner::log($migration->id, 'info', null, "Completion email sent to {$email}.");
+        } catch (Throwable $e) {
+            MigrationRunner::log(
+                $migration->id,
+                'warning',
+                null,
+                "Could not send the completion email to {$email}: {$e->getMessage()}",
+            );
+        }
     }
 }

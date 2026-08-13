@@ -3,12 +3,15 @@
 namespace App\Migration\Migrators;
 
 use App\Migration\AbstractMigrator;
-use App\Migration\Concerns\SurvivesMediaFailures;
+use App\Migration\Concerns\ShedsRejectedFields;
 use App\Migration\MetafieldMapper;
 use App\Migration\MigrationItemResult;
+use App\Migration\MigrationRunner;
+use App\Models\MigrationItem;
 use App\Models\StoreMigration;
 use App\Services\WooCommerceClient;
 use App\Models\WoocommerceConnection;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * Migrates a WooCommerce product (simple or variable) into Shopify using the
@@ -18,7 +21,10 @@ use App\Models\WoocommerceConnection;
  */
 class ProductMigrator extends AbstractMigrator
 {
-    use SurvivesMediaFailures;
+    use ShedsRejectedFields;
+
+    /** Products whose images Shopify rejected before we stop sending images at all. */
+    private const MEDIA_GIVE_UP_AFTER = 5;
 
     private const SET_MUTATION = <<<'GQL'
     mutation productSet($input: ProductSetInput!) {
@@ -31,6 +37,9 @@ class ProductMigrator extends AbstractMigrator
 
     /** Memoised primary location id per shop (for inventory quantities). */
     private static array $locationCache = [];
+
+    /** Woo category id => Shopify collection gid, loaded once per migration. */
+    private static array $collectionCache = [];
 
     /**
      * Weight unit for this run. WooCommerce doesn't report its unit through the
@@ -91,7 +100,7 @@ class ProductMigrator extends AbstractMigrator
             'productType' => data_get($woo, 'categories.0.name') ?: null,
             'status' => $this->status($woo['status'] ?? 'publish'),
             'tags' => $this->tags($migration, $woo),
-            'files' => $this->files($woo, $variations),
+            'files' => $this->mediaIsUnreachable($migration) ? [] : $this->files($woo, $variations),
             'collections' => $this->collections($migration, $woo),
             'metafields' => $metafields,
         ];
@@ -116,40 +125,69 @@ class ProductMigrator extends AbstractMigrator
             $input['id'] = $existingShopifyId;
         }
 
-        $result = $this->runSet($migration, $input);
+        // Optional fields Shopify may reject on messy Woo data. Losing any of them
+        // is a warning; losing the product is not acceptable. Title, options and
+        // variants are deliberately absent — without them there is no product.
+        $optional = ['files', 'metafields', 'collections', 'tags', 'vendor', 'productType', 'descriptionHtml'];
 
-        // Self-heal: if we tried to update a product that no longer exists
-        // (deleted in Shopify), recreate it fresh.
-        if ($result === null && $existingShopifyId) {
-            unset($input['id']);
-            $result = $this->runSet($migration, $input);
-        }
+        return $this->writeSheddingBadFields(
+            function (array $attempt) use ($migration, $existingShopifyId) {
+                // Dropping product-level files means dropping variant files too —
+                // they reference the same sources.
+                if (! array_key_exists('files', $attempt)) {
+                    $attempt = $this->withoutVariantMedia($attempt);
+                }
 
-        // Images Shopify could not download must not cost us the product itself.
-        // Retry once with every file stripped, then flag what went missing.
-        if (is_array($result) && $this->isMediaOnlyError($result)) {
-            $warning = $this->mediaWarning($result);
-            $retried = $this->runSet($migration, $this->withoutMedia($input));
+                $result = $this->runSet($migration, $attempt);
 
-            if (is_string($retried) && $retried !== '') {
-                return MigrationItemResult::successWithWarning($retried, $warning);
-            }
-        }
+                // Self-heal: the product we tried to update no longer exists
+                // (deleted in Shopify), so recreate it fresh.
+                if ($result === null && $existingShopifyId) {
+                    unset($attempt['id']);
+                    $result = $this->runSet($migration, $attempt);
+                }
 
-        if (is_array($result)) {
-            return MigrationItemResult::failed(json_encode($result));
-        }
-
-        return $result
-            ? MigrationItemResult::success($result)
-            : MigrationItemResult::failed('No product id returned by Shopify');
+                return is_array($result) ? [null, $result] : [$result, []];
+            },
+            $input,
+            $optional,
+            fn (string $field) => $field === 'files' ? $this->noteMediaRejected($migration) : null,
+        );
     }
 
-    /** The same productSet input with all product and variant media removed. */
-    private function withoutMedia(array $input): array
+    /**
+     * Once enough products in a run have had their images rejected, the store's
+     * media is simply unreachable (a deleted uploads folder, hotlink protection).
+     * Sending them again just doubles the Shopify calls for every remaining
+     * product, so stop offering them for the rest of the run.
+     */
+    private function noteMediaRejected(StoreMigration $migration): void
     {
-        unset($input['files']);
+        $key = "migration:{$migration->id}:media_rejections";
 
+        Cache::add($key, 0, now()->addDay());
+        $count = (int) Cache::increment($key);
+
+        if ($count === self::MEDIA_GIVE_UP_AFTER) {
+            Cache::put("migration:{$migration->id}:media_unreachable", true, now()->addDay());
+
+            MigrationRunner::log(
+                $migration->id,
+                'warning',
+                'product',
+                "Images could not be downloaded for {$count} products — skipping images for the rest of this migration. Check that your WooCommerce media files are publicly reachable.",
+            );
+        }
+    }
+
+    private function mediaIsUnreachable(StoreMigration $migration): bool
+    {
+        return (bool) Cache::get("migration:{$migration->id}:media_unreachable", false);
+    }
+
+    /** Variant media reference the same sources as product files — shed together. */
+    private function withoutVariantMedia(array $input): array
+    {
         foreach ($input['variants'] ?? [] as $i => $variant) {
             unset($input['variants'][$i]['file']);
         }
@@ -386,10 +424,35 @@ class ProductMigrator extends AbstractMigrator
     /** Resolve Woo category ids -> already-migrated Shopify collection gids. */
     private function collections(StoreMigration $migration, array $woo): array
     {
+        $map = $this->collectionMap($migration);
+
         return collect($woo['categories'] ?? [])
-            ->map(fn ($cat) => $this->shopifyIdFor($migration, 'category', (int) $cat['id']))
+            ->map(fn ($cat) => $map[(int) $cat['id']] ?? null)
             ->filter()
             ->values()
+            ->all();
+    }
+
+    /**
+     * The whole category mapping in one query instead of one per category per
+     * product. A product in five categories used to cost five extra SELECTs, on
+     * every single product.
+     *
+     * Keyed by migration: categories always finish before products in the same
+     * run, and a fresh run must never reuse another run's mapping.
+     */
+    private function collectionMap(StoreMigration $migration): array
+    {
+        if (isset(self::$collectionCache[$migration->id])) {
+            return self::$collectionCache[$migration->id];
+        }
+
+        return self::$collectionCache[$migration->id] = MigrationItem::query()
+            ->where('shop_id', $migration->shop_id)
+            ->where('entity_type', 'category')
+            ->where('status', 'success')
+            ->whereNotNull('shopify_id')
+            ->pluck('shopify_id', 'woocommerce_id')
             ->all();
     }
 
@@ -400,10 +463,15 @@ class ProductMigrator extends AbstractMigrator
             return self::$locationCache[$shopId];
         }
 
-        // Only the id is requested — reading `name`/`isActive` needs the
-        // read_locations scope, but the id alone is available with write_inventory.
-        $res = $this->shopify($migration)->graphql('{ locations(first: 1) { nodes { id } } }');
-        $id = data_get($res, 'data.locations.nodes.0.id');
+        // Cached across worker processes — the in-memory copy dies on every worker
+        // restart, and this is the same answer for the life of the shop.
+        $id = Cache::remember("shopify_primary_location:{$shopId}", now()->addDay(), function () use ($migration) {
+            // Only the id is requested — reading `name`/`isActive` needs the
+            // read_locations scope, but the id alone is available with write_inventory.
+            $res = $this->shopify($migration)->graphql('{ locations(first: 1) { nodes { id } } }');
+
+            return data_get($res, 'data.locations.nodes.0.id');
+        });
 
         return self::$locationCache[$shopId] = $id;
     }

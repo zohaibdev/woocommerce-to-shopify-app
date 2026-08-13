@@ -3,6 +3,7 @@
 namespace App\Migration;
 
 use App\Services\ShopifyClient;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * Maps WooCommerce meta_data entries to Shopify metafields, and lazily creates
@@ -98,6 +99,16 @@ class MetafieldMapper
             if (! empty(self::$defined[$shopId][$key])) {
                 continue;
             }
+
+            // The in-process cache dies with the worker, and on shared hosting the
+            // worker restarts constantly — so every restart re-fired a definition
+            // mutation for every key it saw. Remember it across processes.
+            $cacheKey = "metafield_def:{$shopId}:{$key}";
+            if (Cache::get($cacheKey)) {
+                self::$defined[$shopId][$key] = true;
+                continue;
+            }
+
             self::$defined[$shopId][$key] = true;
 
             try {
@@ -110,6 +121,8 @@ class MetafieldMapper
                         'ownerType' => 'PRODUCT',
                     ],
                 ]);
+
+                Cache::forever($cacheKey, true);
             } catch (\Throwable $e) {
                 report($e); // never let definition creation break a migration
             }

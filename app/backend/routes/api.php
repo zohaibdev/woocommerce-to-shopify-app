@@ -54,6 +54,7 @@ Route::middleware('shopify.session')->group(function () {
         Route::post('/', [MigrationController::class, 'store']);
         Route::get('/{id}', [MigrationController::class, 'show']);
         Route::get('/{id}/items', [MigrationController::class, 'items']);
+        Route::get('/{id}/logs', [MigrationController::class, 'logs']);
         Route::get('/{id}/download', [MigrationController::class, 'download']);
         Route::post('/{id}/cancel', [MigrationController::class, 'cancel']);
         Route::post('/{id}/retry-failed', [MigrationController::class, 'retryFailed']);

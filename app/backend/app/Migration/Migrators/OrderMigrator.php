@@ -3,10 +3,12 @@
 namespace App\Migration\Migrators;
 
 use App\Migration\AbstractMigrator;
+use App\Migration\Concerns\ShedsRejectedFields;
 use App\Migration\MigrationItemResult;
 use App\Models\StoreMigration;
 use App\Models\WoocommerceConnection;
 use App\Services\WooCommerceClient;
+use App\Support\PhoneNumber;
 
 /**
  * Migrates WooCommerce orders into Shopify using the orderCreate mutation.
@@ -16,6 +18,8 @@ use App\Services\WooCommerceClient;
  */
 class OrderMigrator extends AbstractMigrator
 {
+    use ShedsRejectedFields;
+
     private const CREATE_MUTATION = <<<'GQL'
     mutation orderCreate($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
       orderCreate(order: $order, options: $options) {
@@ -75,24 +79,26 @@ class OrderMigrator extends AbstractMigrator
             'sendFulfillmentReceipt' => false,
         ];
 
-        $shopify = $this->shopify($migration);
-        $body = $shopify->graphql(self::CREATE_MUTATION, ['order' => $order, 'options' => $options]);
-        $errors = $shopify->userErrors($body, 'orderCreate');
+        // Line items, currency and financial status make the order what it is;
+        // an address or a payment record Shopify rejects is worth a warning, not
+        // the loss of the order.
+        return $this->writeSheddingBadFields(
+            function (array $attempt) use ($migration, $options) {
+                $shopify = $this->shopify($migration);
+                $body = $shopify->graphql(self::CREATE_MUTATION, ['order' => $attempt, 'options' => $options]);
 
-        // Surface top-level errors too (e.g. missing write_orders scope).
-        if (empty($errors)) {
-            $errors = $shopify->topLevelErrors($body);
-        }
+                $errors = $shopify->userErrors($body, 'orderCreate');
 
-        if (! empty($errors)) {
-            return MigrationItemResult::failed(json_encode($errors));
-        }
+                // Surface top-level errors too (e.g. missing write_orders scope).
+                if (empty($errors)) {
+                    $errors = $shopify->topLevelErrors($body);
+                }
 
-        $id = data_get($body, 'data.orderCreate.order.id');
-
-        return $id
-            ? MigrationItemResult::success($id)
-            : MigrationItemResult::failed('No order id returned by Shopify');
+                return [data_get($body, 'data.orderCreate.order.id'), $errors];
+            },
+            $order,
+            ['transactions', 'shippingAddress', 'billingAddress', 'shippingLines', 'tags', 'note', 'processedAt'],
+        );
     }
 
     private function lineItems(array $woo, string $currency): array
@@ -148,7 +154,8 @@ class OrderMigrator extends AbstractMigrator
             'provinceCode' => $a['state'] ?? null,
             'countryCode' => $a['country'] ?? null,
             'zip' => $a['postcode'] ?? null,
-            'phone' => $a['phone'] ?? null,
+            // Shopify needs E.164; WooCommerce stores whatever was typed.
+            'phone' => PhoneNumber::toE164($a['phone'] ?? null, $a['country'] ?? null),
         ], fn ($v) => $v !== null && $v !== '');
     }
 

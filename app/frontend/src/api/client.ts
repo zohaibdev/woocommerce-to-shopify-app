@@ -178,6 +178,14 @@ export interface PageMeta {
   has_more: boolean;
 }
 
+export interface MigrationLogEntry {
+  id: number;
+  level: "info" | "warning" | "error";
+  entity_type: string | null;
+  message: string;
+  created_at: string;
+}
+
 export interface MigrationItem {
   id: number;
   entity_type: string;
@@ -197,9 +205,11 @@ export const api = {
   testWoo: () => request<WooConnection>("/woocommerce/test", { method: "POST" }),
 
   preview: () =>
-    request<{ counts: EntityCount[]; plan: { code: string; name: string } | null }>(
-      "/woocommerce/preview",
-    ),
+    request<{
+      counts: EntityCount[];
+      plan: { code: string; name: string } | null;
+      shop_email: string | null;
+    }>("/woocommerce/preview"),
 
   listMigrations: (page = 1, perPage = 10) =>
     request<{ data: Migration[]; meta: PageMeta }>(
@@ -212,6 +222,8 @@ export const api = {
     defaultVendor?: string;
     name?: string;
     weightUnit?: string;
+    /** Blank = no email when the migration finishes. */
+    notifyEmail?: string;
   }) =>
     request<Migration>("/migrations", {
       method: "POST",
@@ -221,6 +233,7 @@ export const api = {
         default_vendor: opts.defaultVendor ?? "",
         name: opts.name ?? "",
         weight_unit: opts.weightUnit ?? "KILOGRAMS",
+        notify_email: opts.notifyEmail ?? "",
       }),
     }),
 
@@ -280,6 +293,11 @@ export const api = {
     const q = new URLSearchParams(params as Record<string, string>).toString();
     return request<{ data: MigrationItem[] }>(`/migrations/${id}/items?${q}`);
   },
+
+  getLogs: (id: number, limit = 100) =>
+    request<{ data: MigrationLogEntry[] }>(`/migrations/${id}/logs?limit=${limit}`, {
+      cache: "no-store",
+    }),
 
   cancelMigration: (id: number) =>
     request<Migration>(`/migrations/${id}/cancel`, { method: "POST" }),

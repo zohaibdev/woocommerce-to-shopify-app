@@ -3,13 +3,17 @@
 namespace App\Migration\Migrators;
 
 use App\Migration\AbstractMigrator;
+use App\Migration\Concerns\ShedsRejectedFields;
 use App\Migration\MigrationItemResult;
 use App\Models\StoreMigration;
 use App\Models\WoocommerceConnection;
 use App\Services\WooCommerceClient;
+use App\Support\PhoneNumber;
 
 class CustomerMigrator extends AbstractMigrator
 {
+    use ShedsRejectedFields;
+
     private const CREATE_MUTATION = <<<'GQL'
     mutation customerCreate($input: CustomerInput!) {
       customerCreate(input: $input) {
@@ -39,11 +43,16 @@ class CustomerMigrator extends AbstractMigrator
     protected function doMigrate(StoreMigration $migration, array $wooItem, ?string $existingShopifyId = null): MigrationItemResult
     {
         $billing = $wooItem['billing'] ?? [];
+
+        // WooCommerce keeps whatever the shopper typed ("0300 1234567"); Shopify
+        // needs E.164. The billing country supplies the missing calling code.
+        $phone = PhoneNumber::toE164($billing['phone'] ?? null, $billing['country'] ?? null);
+
         $input = [
             'firstName' => $wooItem['first_name'] ?? ($billing['first_name'] ?? null),
             'lastName' => $wooItem['last_name'] ?? ($billing['last_name'] ?? null),
             'email' => $wooItem['email'] ?? ($billing['email'] ?? null),
-            'phone' => $billing['phone'] ?? null,
+            'phone' => $phone,
             // NOTE: passwords are NOT migrated (hashes incompatible). Invites are Phase 2.
             'addresses' => $this->addresses($wooItem),
         ];
@@ -58,8 +67,22 @@ class CustomerMigrator extends AbstractMigrator
             return MigrationItemResult::failed('Customer has no email address');
         }
 
+        // A phone Shopify won't take ("Phone is invalid", "Phone has already been
+        // taken") or an address it rejects must not cost us the person. Email
+        // stays required — it is how the customer is identified.
+        return $this->writeSheddingBadFields(
+            fn (array $attempt) => $this->create($migration, $attempt),
+            $input,
+            ['phone', 'addresses', 'tags'],
+        );
+    }
+
+    /** @return array{0: string|null, 1: array} [shopifyId, errors] */
+    private function create(StoreMigration $migration, array $input): array
+    {
         $shopify = $this->shopify($migration);
         $body = $shopify->graphql(self::CREATE_MUTATION, ['input' => $input]);
+
         $errors = $shopify->userErrors($body, 'customerCreate');
 
         // Surface top-level errors too (e.g. Protected Customer Data not approved).
@@ -67,17 +90,9 @@ class CustomerMigrator extends AbstractMigrator
             $errors = $shopify->topLevelErrors($body);
         }
 
-        if (! empty($errors)) {
-            return MigrationItemResult::failed(json_encode($errors));
-        }
-
-        $shopifyId = data_get($body, 'data.customerCreate.customer.id');
-        if (! $shopifyId) {
-            return MigrationItemResult::failed('No customer id returned by Shopify');
-        }
-
-        return MigrationItemResult::success($shopifyId);
+        return [data_get($body, 'data.customerCreate.customer.id'), $errors];
     }
+
 
     private function addresses(array $woo): array
     {
@@ -93,7 +108,7 @@ class CustomerMigrator extends AbstractMigrator
             'provinceCode' => $b['state'] ?? null,
             'countryCode' => $b['country'] ?? null,
             'zip' => $b['postcode'] ?? null,
-            'phone' => $b['phone'] ?? null,
+            'phone' => PhoneNumber::toE164($b['phone'] ?? null, $b['country'] ?? null),
         ]];
     }
 }
