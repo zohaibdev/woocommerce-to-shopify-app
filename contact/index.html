@@ -85,19 +85,19 @@
     <tbody>
       <tr>
         <td>Support with a migration</td>
-        <td>Support page inside the app, or <a href="mailto:support@shift-shop.webnday.com">support@shift-shop.webnday.com</a></td>
+        <td>Support page inside the app, or <a href="mailto:support@webnday.com">support@webnday.com</a></td>
       </tr>
       <tr>
         <td>Billing and refunds</td>
-        <td><a href="mailto:support@shift-shop.webnday.com">support@shift-shop.webnday.com</a> — please read the <a href="/refund/">refund policy</a> first</td>
+        <td><a href="mailto:support@webnday.com">support@webnday.com</a> — please read the <a href="/refund/">refund policy</a> first</td>
       </tr>
       <tr>
         <td>Privacy, data access or deletion</td>
-        <td><a href="mailto:support@shift-shop.webnday.com">support@shift-shop.webnday.com</a> — see the <a href="/privacy/">privacy policy</a></td>
+        <td><a href="mailto:support@webnday.com">support@webnday.com</a> — see the <a href="/privacy/">privacy policy</a></td>
       </tr>
       <tr>
         <td>Security disclosure</td>
-        <td><a href="mailto:support@shift-shop.webnday.com">support@shift-shop.webnday.com</a> — please report privately and give us time to fix it</td>
+        <td><a href="mailto:support@webnday.com">support@webnday.com</a> — please report privately and give us time to fix it</td>
       </tr>
     </tbody>
   </table>
@@ -183,10 +183,10 @@
         show('Too many messages from this address. Please try again later, or email us directly.', false);
       } else {
         var body = await res.json().catch(function () { return {}; });
-        show(body.error || body.message || 'Something went wrong. Please email support@shift-shop.webnday.com instead.', false);
+        show(body.error || body.message || 'Something went wrong. Please email support@webnday.com instead.', false);
       }
     } catch (err) {
-      show('Could not reach the server. Please email support@shift-shop.webnday.com instead.', false);
+      show('Could not reach the server. Please email support@webnday.com instead.', false);
     } finally {
       submit.disabled = false;
       submit.textContent = 'Send message';

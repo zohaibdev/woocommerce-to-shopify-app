@@ -49,10 +49,10 @@ class MailSettingsTest extends TestCase
         return array_merge([
             'host' => 'smtp.hostinger.com',
             'port' => 587,
-            'username' => 'support@shift-shop.webnday.com',
+            'username' => 'support@webnday.com',
             'password' => 'super-secret',
             'scheme' => 'smtp',
-            'from_address' => 'support@shift-shop.webnday.com',
+            'from_address' => 'support@webnday.com',
             'from_name' => 'Store Shift',
         ], $overrides);
     }
@@ -112,7 +112,7 @@ class MailSettingsTest extends TestCase
         $this->assertSame('smtp', config('mail.default'));
         $this->assertSame('smtp.hostinger.com', config('mail.mailers.smtp.host'));
         $this->assertSame('super-secret', config('mail.mailers.smtp.password'));
-        $this->assertSame('support@shift-shop.webnday.com', config('mail.from.address'));
+        $this->assertSame('support@webnday.com', config('mail.from.address'));
     }
 
     public function test_apply_is_a_no_op_when_nothing_is_stored(): void

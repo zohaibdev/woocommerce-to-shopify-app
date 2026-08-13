@@ -282,7 +282,7 @@
       "impact": "Placeholders [LEGAL ENTITY NAME], [REGISTERED ADDRESS] and [JURISDICTION] must be filled in before submission"
     },
     {
-      "item": "support@shift-shop.webnday.com mailbox",
+      "item": "support@webnday.com mailbox",
       "status": "UNKNOWN — verify it exists",
       "impact": "Every public page and the App Store listing points at it; the reviewer may email it"
     },

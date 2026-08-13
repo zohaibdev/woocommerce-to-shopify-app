@@ -140,7 +140,7 @@ Minimum 3, 1600 × 900 px, taken inside the Shopify admin (embedded).
 
 | Field | Value |
 |---|---|
-| Support email | `support@shift-shop.webnday.com` *(set this up before submitting)* |
+| Support email | `support@webnday.com` *(set this up before submitting)* |
 | Support / help URL | `https://shift-shop.webnday.com/contact/` |
 | Privacy policy URL | `https://shift-shop.webnday.com/privacy/` ✅ live |
 | Terms of service URL | `https://shift-shop.webnday.com/terms/` ✅ live |
@@ -347,7 +347,7 @@ see the standard Shopify approval screen.
    `[LEGAL ENTITY NAME]`, `[REGISTERED ADDRESS]` and `[JURISDICTION]`. Shopify
    reviewers read these pages — placeholders in a live policy look unfinished.
 
-2. **Create `support@shift-shop.webnday.com`.** Every public page, both policies
+2. **Create `support@webnday.com`.** Every public page, both policies
    and this listing point at it, and the reviewer may email it.
 
 3. **A public WooCommerce test store** — the reviewer has no way to test

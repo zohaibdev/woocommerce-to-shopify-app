@@ -276,7 +276,7 @@ export default function AdminSettings() {
                     label="Username"
                     value={draft.username}
                     onChange={set("username")}
-                    placeholder="support@shift-shop.webnday.com"
+                    placeholder="support@webnday.com"
                     autoComplete="off"
                   />
                   <TextField
@@ -300,7 +300,7 @@ export default function AdminSettings() {
                     type="email"
                     value={draft.from_address}
                     onChange={set("from_address")}
-                    placeholder="support@shift-shop.webnday.com"
+                    placeholder="support@webnday.com"
                     autoComplete="off"
                   />
                   <TextField
