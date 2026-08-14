@@ -114,12 +114,32 @@ class OrderMigrator extends AbstractMigrator
             $unit = $li['price'] ?? (($li['total'] ?? 0) / $qty);
 
             return array_filter([
-                'title' => $li['name'] ?? 'Item',
+                // The SKU is deliberately NOT sent. Shopify treats it as a product
+                // reference: when it matches no existing variant it silently creates
+                // a draft product called "Import placeholder for {sku}" so the line
+                // item has something to point at. Importing historical orders that
+                // way buried the real catalogue under hundreds of junk drafts.
+                // These are custom line items — see the note in /developers/.
+                'title' => $this->lineTitle($li),
                 'quantity' => $qty,
-                'sku' => $li['sku'] ?? null,
                 'priceSet' => $this->money($unit, $currency),
             ], fn ($v) => $v !== null);
         })->values()->all();
+    }
+
+    /**
+     * Keep the SKU visible on the order without handing it to Shopify as a product
+     * reference. Losing it entirely would make historical orders harder to reconcile
+     * against the catalogue.
+     */
+    private function lineTitle(array $li): string
+    {
+        $title = trim((string) ($li['name'] ?? '')) ?: 'Item';
+        $sku = trim((string) ($li['sku'] ?? ''));
+
+        return $sku === '' || str_contains($title, $sku)
+            ? $title
+            : "{$title} (SKU: {$sku})";
     }
 
     private function shippingLines(array $woo, string $currency): array

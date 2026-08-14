@@ -34,6 +34,9 @@ class RetryFailedItemsJob implements ShouldQueue
 
     public int $tries = 3;
 
+    /** Same reasoning as ProcessBatchJob: one slow record must not kill the job. */
+    public int $timeout = 300;
+
     private const TIME_BUDGET_SECONDS = 35;
 
     /** WooCommerce ids fetched per request. */

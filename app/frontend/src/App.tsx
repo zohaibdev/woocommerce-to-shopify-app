@@ -18,7 +18,6 @@ import Settings from "./pages/Settings";
 import Support from "./pages/Support";
 import InstallPrompt from "./pages/InstallPrompt";
 import Pricing from "./pages/Pricing";
-import { loadSettings } from "./settings";
 import AdminApp from "./admin/AdminApp";
 
 /**
@@ -27,6 +26,18 @@ import AdminApp from "./admin/AdminApp";
  * before (remembered shop). Without it every API call 401s, so we show the
  * install prompt instead of a dashboard that cannot load.
  */
+/**
+ * Open a page of the public marketing site (docs, contact) in a new tab.
+ *
+ * The app is served from /app/ on the same host, so the public pages sit at the
+ * origin root. `_blank` is required: these pages set no frame headers for the
+ * Shopify admin, and navigating the embedded iframe away from the app would
+ * strand the merchant.
+ */
+function openPublicPage(path: string): void {
+  window.open(`${window.location.origin}${path}`, "_blank", "noopener");
+}
+
 function hasShopContext(): boolean {
   const q = new URLSearchParams(window.location.search);
   return q.has("host") || q.has("shop") || !!localStorage.getItem("shop_domain");
@@ -35,7 +46,6 @@ function hasShopContext(): boolean {
 function App() {
   const navigate = useNavigate();
   const location = useLocation();
-  const prefs = loadSettings();
 
   // Shopify returns the merchant to the app root after a charge is approved or
   // declined, but only the Pricing page knows what `?billing=` means — so the
@@ -119,15 +129,17 @@ function App() {
       <FooterHelp>
         <BlockStack gap="100" inlineAlign="center">
           <InlineStack gap="200" blockAlign="center" align="center">
-            <Link url={prefs.supportUrl} external>
-              Support
-            </Link>
+            {/* Support is a page inside the app — sending merchants to a mailto:
+                (which the admin iframe blocks anyway) was never right. */}
+            <Link onClick={() => navigate("/support")}>Support</Link>
             <Text as="span" tone="subdued">
               ·
             </Text>
-            <Link url={prefs.docsUrl} external>
-              Documentation
-            </Link>
+            <Link onClick={() => openPublicPage("/developers/")}>Documentation</Link>
+            <Text as="span" tone="subdued">
+              ·
+            </Text>
+            <Link onClick={() => openPublicPage("/contact/")}>Contact</Link>
             <Text as="span" tone="subdued">
               ·
             </Text>

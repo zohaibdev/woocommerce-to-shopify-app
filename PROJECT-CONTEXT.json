@@ -233,6 +233,28 @@
       "fix": "retry_after now 900s; batches are resumable + time-bounded; ProcessBatchJob self-advances instead of chaining; counters derived from migration_items. Run migration:watchdog to recover an already-stuck run."
     },
     {
+      "issue": "Shopify fills the catalogue with 'Import placeholder for {sku}' draft products",
+      "symptom": "After an order migration the merchant's Products list is hundreds of empty drafts named after numeric SKUs",
+      "cause": "OrderMigrator sent `sku` on each line item. Shopify treats it as a PRODUCT REFERENCE and auto-creates a draft placeholder when it matches no existing variant.",
+      "fix": "Never send `sku` on order line items — OrderMigrator::lineTitle() appends it to the title instead, so the information survives without triggering product creation. Cleanup for an affected store: search 'Import placeholder' in Shopify Products and bulk delete."
+    },
+    {
+      "issue": "Orders fail in bursts with 'Too many attempts. Please try again later.'",
+      "symptom": "Exactly ~5 orders succeed per attempt, every remaining order is marked failed. Repeats identically on every retry.",
+      "cause": "Shopify rate limits orderCreate SEPARATELY from the GraphQL cost budget and reports it as a plain userError — not a 429, not a THROTTLED code — so it was recorded as a permanent item failure.",
+      "fix": "ShopifyClient::looksRateLimited() scans the response for these messages and throws ShopifyThrottledException, so the batch pauses 60s and resumes instead of burning the records."
+    },
+    {
+      "issue": "'ProcessBatchJob has timed out' mid-batch",
+      "cause": "The 35s time budget is only checked BETWEEN items; one heavy product (variations fetch + productSet + media retry) can exceed Laravel's 60s default job timeout.",
+      "fix": "ProcessBatchJob and RetryFailedItemsJob set $timeout = 300 — above any single record, below retry_after (900)."
+    },
+    {
+      "issue": "Progress bar full while most records failed",
+      "symptom": "'50/50 · 20 ok · 30 failed' drew a 100% bar, reading as success",
+      "fix": "MigrationDetails draws successful/total (what actually landed) with a critical tone when failed > 0"
+    },
+    {
       "issue": "WooCommerce phone numbers are rejected by Shopify",
       "symptom": "[{\"field\":[\"phone\"],\"message\":\"Phone is invalid\"}] — every customer fails",
       "cause": "Woo stores whatever the shopper typed ('0300 1234567'); Shopify wants E.164",
@@ -323,7 +345,7 @@
   },
 
   "testing": {
-    "total_tests": 127,
+    "total_tests": 137,
     "command": "cd app/backend && php artisan test",
     "suites": {
       "MigrationEngineTest": "queue dispatch, dependency ordering, idempotency, custom tags",

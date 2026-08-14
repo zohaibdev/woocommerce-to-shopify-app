@@ -38,6 +38,15 @@ class ProcessBatchJob implements ShouldQueue
     public int $tries = 3;
 
     /**
+     * Hard kill time for the job. The budget below is only checked BETWEEN items,
+     * so a single slow record — a variable product with many variations, its own
+     * Woo call, and a media retry — can run well past it. At the 60s default that
+     * killed the whole batch ("ProcessBatchJob has timed out"). Must stay under
+     * the queue's retry_after (900s).
+     */
+    public int $timeout = 300;
+
+    /**
      * Stop after this many seconds and continue in a new job. Must stay well under
      * both the worker's --max-time and the queue's retry_after.
      */

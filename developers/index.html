@@ -203,9 +203,15 @@
     move your stock, and no receipts are sent to customers.
   </p>
   <div class="note warn">
-    <strong>Known limitation.</strong> Order line items are created as custom line items rather than
-    being linked to the migrated product variants. Totals, titles and SKUs are correct, but the
-    orders are not connected to your product records.
+    <strong>Known limitation.</strong> Order line items are created as <em>custom</em> line items
+    rather than being linked to the migrated product variants. Titles, quantities and totals are
+    correct, and the SKU is kept in the line item title — but the orders are not connected to your
+    product records.
+    <br /><br />
+    This is deliberate. Shopify treats a line item's SKU as a product reference, and when it matches
+    no existing variant it silently creates a draft product called
+    <code>Import placeholder for {sku}</code>. Importing historical orders that way would bury your
+    real catalogue under hundreds of empty drafts.
   </div>
 
   <h2 id="not-migrated">6. What is not migrated</h2>

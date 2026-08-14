@@ -12,6 +12,12 @@ use Illuminate\Support\Facades\Http;
  */
 class ShopifyClient
 {
+    /**
+     * Wait before retrying a mutation Shopify soft-rate-limited. Orders refill in
+     * small bursts, so a short pause and another attempt beats a long sleep.
+     */
+    private const SOFT_THROTTLE_BACKOFF = 60.0;
+
     private string $apiVersion;
 
     public function __construct(private readonly Shop $shop)
@@ -61,9 +67,40 @@ class ShopifyClient
             }
         }
 
+        // Some Shopify mutations — orderCreate above all — are rate limited
+        // SEPARATELY from the GraphQL cost budget, and report it as an ordinary
+        // userError instead of a 429 or a THROTTLED code. Left undetected it looks
+        // like a permanent failure: a run would land ~5 orders, then mark every
+        // remaining one failed. It is throttling, so treat it as throttling.
+        if (self::looksRateLimited($body)) {
+            throw new ShopifyThrottledException(self::SOFT_THROTTLE_BACKOFF);
+        }
+
         $res->throw();
 
         return $body;
+    }
+
+    /**
+     * A rate-limit message hidden in any mutation's userErrors.
+     * Deliberately a whole-body scan: the client does not know which mutation
+     * field it just called, and these messages are unmistakable.
+     */
+    private static function looksRateLimited(array $body): bool
+    {
+        if (empty($body['data'])) {
+            return false;
+        }
+
+        $text = mb_strtolower((string) json_encode($body['data']));
+
+        foreach (['too many attempts', 'exceeded rate limit', 'throttled'] as $needle) {
+            if (str_contains($text, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** Extract userErrors from a mutation payload, if any. */

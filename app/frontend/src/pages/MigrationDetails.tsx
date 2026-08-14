@@ -135,21 +135,43 @@ export default function MigrationDetails() {
 
         <Card>
           <BlockStack gap="400">
-            {migration.entities.map((e) => (
-              <BlockStack key={e.type} gap="100">
-                <InlineStack align="space-between">
-                  <Text as="span" fontWeight="bold">
-                    {e.type}
-                  </Text>
-                  <Text as="span" tone="subdued">
-                    {e.total === 0 && isActive
-                      ? "counting…"
-                      : `${e.processed}/${e.total} · ${e.successful} ok · ${e.failed} failed`}
-                  </Text>
-                </InlineStack>
-                <ProgressBar progress={e.percentage} size="small" />
-              </BlockStack>
-            ))}
+            {migration.entities.map((e) => {
+              // The bar tracks what actually LANDED, not what was attempted. A run
+              // where 30 of 50 orders failed used to show a full bar because all 50
+              // were "processed" — which reads as success when it is the opposite.
+              const landed = e.total > 0 ? Math.round((e.successful / e.total) * 100) : 0;
+
+              return (
+                <BlockStack key={e.type} gap="100">
+                  <InlineStack align="space-between">
+                    <Text as="span" fontWeight="bold">
+                      {e.type}
+                    </Text>
+                    {e.total === 0 && isActive ? (
+                      <Text as="span" tone="subdued">
+                        counting…
+                      </Text>
+                    ) : (
+                      <InlineStack gap="150">
+                        <Text as="span" tone="subdued">
+                          {e.successful}/{e.total} migrated
+                        </Text>
+                        {e.failed > 0 && (
+                          <Text as="span" tone="critical">
+                            {e.failed} failed
+                          </Text>
+                        )}
+                      </InlineStack>
+                    )}
+                  </InlineStack>
+                  <ProgressBar
+                    progress={landed}
+                    size="small"
+                    tone={e.failed > 0 ? "critical" : "primary"}
+                  />
+                </BlockStack>
+              );
+            })}
           </BlockStack>
         </Card>
 
