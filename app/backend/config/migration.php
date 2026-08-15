@@ -4,8 +4,18 @@ return [
     // Items per WooCommerce API page / Shopify batch write.
     'per_page' => (int) env('MIGRATION_PER_PAGE', 100),
 
-    // Max concurrent Shopify calls per shop (enforce via Redis::throttle if desired).
-    'shopify_concurrency' => (int) env('MIGRATION_SHOPIFY_CONCURRENCY', 2),
+    // Ceiling on how many batch jobs may run at once for ONE shop. The actual
+    // number is derived from the shop's real Shopify budget (see ShopifyPlan),
+    // but past a handful of workers the merchant's WooCommerce host — not
+    // Shopify — becomes the limit, and piling on more only knocks their store
+    // over. Raise this only once you have workers to run them: with a single
+    // queue worker the jobs still execute one after another.
+    'max_concurrency' => (int) env('MIGRATION_MAX_CONCURRENCY', 8),
+
+    // --- Images ---
+    // Default image size when the merchant expresses no preference.
+    // One of: standard (1024px), large (1536px), full (original file).
+    'image_size' => env('MIGRATION_IMAGE_SIZE', 'standard'),
 
     // WooCommerce doesn't return its weight unit per product, so map it here.
     // One of: KILOGRAMS, GRAMS, POUNDS, OUNCES.

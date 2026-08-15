@@ -7,6 +7,9 @@ use App\Migration\MigratorRegistry;
 use App\Models\MigrationBatch;
 use App\Models\MigrationEntity;
 use App\Models\StoreMigration;
+use App\Services\ShopifyPlan;
+use App\Support\PlanPool;
+use App\Support\SourceHealth;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -29,6 +32,29 @@ class StartMigrationJob implements ShouldQueue
 
     public int $tries = 3;
 
+    /**
+     * Planning is the longest single job in the whole engine, and it had no
+     * timeout of its own — so it inherited the worker's default of SIXTY SECONDS,
+     * while every other job here sets its own. That default is nowhere near
+     * enough for a large store:
+     *
+     *   - one count() per entity, each an HTTP call the client gives 60s and three
+     *     retries of its own, and
+     *   - when the store does not send X-WP-Total (a security plugin, a caching
+     *     proxy, Cloudflare — all common), counting falls back to probing for the
+     *     last page: ~2·log₂(pages) requests, and those probes are deliberately
+     *     the DEEPEST, slowest pages on the site.
+     *
+     * Four entities on a 50k catalogue is minutes, not seconds. The job was killed
+     * at 60s, retried three times, and then failed() marked the migration failed —
+     * and the watchdog only sweeps pending/processing runs, so nothing ever picked
+     * it up again. The largest merchants were the ones who could never start.
+     *
+     * Must stay under the queue's retry_after (900s) so the queue never decides
+     * this job is dead and runs a second copy of the planner.
+     */
+    public int $timeout = 600;
+
     public function __construct(public int $migrationId) {}
 
     public function handle(MigratorRegistry $registry): void
@@ -49,9 +75,36 @@ class StartMigrationJob implements ShouldQueue
         $ordered = $registry->order($migration->selected_entities);
         $shop = $migration->shop;
 
+        // Attribute the WooCommerce counting requests below to this migration, so
+        // a store that is already struggling is reported before the merchant has
+        // watched a dead-looking page for two minutes.
+        SourceHealth::within($migration->id);
+
+        // Work out how hard we are allowed to push THIS merchant's Shopify store.
+        // The plan name is cosmetic; the numbers that matter (bucket size, restore
+        // rate) are learned from the response to this very call.
+        $plan = app(ShopifyPlan::class);
+        $plan->detect($shop);
+        MigrationRunner::log($migration->id, 'info', null, $plan->describe($shop->refresh()));
+
         // Counting is several WooCommerce round-trips before any progress bar can
         // move. Say so, otherwise the first minute looks like a dead page.
         MigrationRunner::log($migration->id, 'info', null, 'Reading your WooCommerce store…');
+
+        // One shared record budget for the whole run, drawn down entity by entity
+        // below. Built once so the allocation is consistent across them.
+        $pool = PlanPool::for($shop);
+
+        if ($pool->isActive()) {
+            MigrationRunner::log(
+                $migration->id,
+                'info',
+                null,
+                'Your '.($shop->currentPlan()?->name ?? 'current').' plan covers '
+                    .number_format((int) $pool->limit).' records in total across products, customers and orders — '
+                    .number_format((int) $pool->remaining()).' still available.',
+            );
+        }
 
         foreach ($ordered as $entityType) {
             $migrator = $registry->make($entityType);
@@ -88,6 +141,26 @@ class StartMigrationJob implements ShouldQueue
                         ? "{$entityType} is not included in the ".($shop->currentPlan()?->name ?? 'current').' plan — skipped. Upgrade your plan to migrate it.'
                         : "Plan limit reached: migrating {$limit} of {$available} {$entityType} records. Upgrade to migrate the rest.",
                 );
+            }
+
+            // The SHARED record budget, spent across products, customers and
+            // orders together. Claimed here in dependency order, which is the same
+            // order the preview claimed it in — so what the wizard promised is
+            // what this plans. See App\Support\PlanPool.
+            if ($pool->meters($entityType) && $limit !== 0) {
+                $beforePool = $total;
+                $total = $pool->claim($entityType, $total);
+
+                if ($total < $beforePool) {
+                    MigrationRunner::log(
+                        $migration->id,
+                        'warning',
+                        $entityType,
+                        'Plan allowance reached: your '.($shop->currentPlan()?->name ?? 'current').' plan covers '
+                            .number_format((int) $pool->limit).' records in total across products, customers and orders. '
+                            ."Migrating {$total} of {$available} {$entityType} records — talk to support if you need more.",
+                    );
+                }
             }
 
             MigrationEntity::updateOrCreate(

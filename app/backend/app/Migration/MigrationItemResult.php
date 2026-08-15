@@ -37,4 +37,27 @@ class MigrationItemResult
     {
         return new self('failed', null, $error);
     }
+
+    /**
+     * Fold in warnings raised BEFORE the write (a product whose shape had to be
+     * reshaped to fit Shopify's limits, say) so they reach the merchant alongside
+     * anything the write itself had to drop.
+     *
+     * @param  array<int, string>  $warnings
+     */
+    public function withWarnings(array $warnings): self
+    {
+        $warnings = array_values(array_filter($warnings));
+
+        if (empty($warnings) || $this->status === 'failed') {
+            return $this;
+        }
+
+        return new self(
+            $this->status,
+            $this->shopifyId,
+            $this->error,
+            trim(implode(' ', array_filter([$this->warning, ...$warnings]))),
+        );
+    }
 }

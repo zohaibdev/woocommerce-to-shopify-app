@@ -12,9 +12,10 @@ import {
   InlineStack,
   BlockStack,
   Box,
+  Banner,
 } from "@shopify/polaris";
 import { useNavigate } from "react-router-dom";
-import { api, type Migration, type PageMeta } from "../api/client";
+import { api, type Migration, type MigrationListMeta } from "../api/client";
 
 const statusTone: Record<Migration["status"], "success" | "critical" | "attention" | "info"> = {
   completed: "success",
@@ -31,18 +32,24 @@ const PER_PAGE = 10;
 export default function MigrationHistory() {
   const navigate = useNavigate();
   const [migrations, setMigrations] = useState<Migration[]>([]);
-  const [meta, setMeta] = useState<PageMeta | null>(null);
+  const [meta, setMeta] = useState<MigrationListMeta | null>(null);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
 
+  const [error, setError] = useState<string | null>(null);
+
   const load = useCallback((p: number) => {
     setLoading(true);
+    setError(null);
     api
       .listMigrations(p, PER_PAGE)
       .then(({ data, meta }) => {
         setMigrations(data);
         setMeta(meta);
       })
+      // Without this the promise rejected unhandled and the list sat on a
+      // skeleton forever, which reads as the page having hung.
+      .catch((e) => setError((e as Error).message))
       .finally(() => setLoading(false));
   }, []);
 
@@ -57,9 +64,25 @@ export default function MigrationHistory() {
     <Page
       title="Migrations"
       subtitle={meta && meta.total > 0 ? `${meta.total} total` : undefined}
-      primaryAction={{ content: "New migration", onAction: () => navigate("/migrations/new") }}
+      primaryAction={
+        // A shop may only run one migration at a time — the API returns 409 for a
+        // second — so while one is in flight this points at it instead of
+        // offering a wizard that cannot be submitted.
+        meta?.active_migration_id
+          ? {
+              content: "View running migration",
+              onAction: () => navigate(`/migrations/${meta.active_migration_id}`),
+            }
+          : { content: "New migration", onAction: () => navigate("/migrations/new") }
+      }
     >
       <BlockStack gap="400">
+        {error && (
+          <Banner tone="critical" title="Could not load your migrations">
+            {error}
+          </Banner>
+        )}
+
         <Card padding="0">
           {loading ? (
             <div style={{ padding: 16 }}>
@@ -71,6 +94,7 @@ export default function MigrationHistory() {
               action={{
                 content: "Start new migration",
                 onAction: () => navigate("/migrations/new"),
+                disabled: !!meta?.active_migration_id,
               }}
               image="https://cdn.shopify.com/s/files/1/0262/4071/2726/files/emptystate-files.png"
             >
@@ -81,6 +105,7 @@ export default function MigrationHistory() {
               items={migrations}
               renderItem={(m) => (
                 <ResourceItem
+                  key={m.id}
                   id={String(m.id)}
                   onClick={() => navigate(`/migrations/${m.id}`)}
                   accessibilityLabel={`Migration ${m.id}`}

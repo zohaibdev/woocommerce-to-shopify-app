@@ -8,6 +8,7 @@ use App\Models\StoreMigration;
 use App\Models\WoocommerceConnection;
 use App\Services\ShopifyClient;
 use App\Services\WooCommerceClient;
+use Illuminate\Database\UniqueConstraintViolationException;
 
 abstract class AbstractMigrator implements Migrator
 {
@@ -38,6 +39,30 @@ abstract class AbstractMigrator implements Migrator
     protected function wooSource(): ?array
     {
         return null;
+    }
+
+    /**
+     * Page ids from the migrator's own WooCommerce resource.
+     *
+     * Every migrator that declares a wooSource() gets this for free, and it is
+     * deliberately the SAME resource + query as fetchBatch() — an id list built
+     * from a different filter than the records would be worse than no id list at
+     * all. Migrators with no source of their own (the inline no-ops) return null
+     * and keep the original paging.
+     *
+     * @return array<int, int>|null
+     */
+    public function listSourceIds(WoocommerceConnection $connection, int $page, int $perPage): ?array
+    {
+        $source = $this->wooSource();
+
+        if ($source === null) {
+            return null;
+        }
+
+        [$resource, $query] = $source;
+
+        return (new WooCommerceClient($connection))->listIds($resource, $page, $perPage, $query);
     }
 
     public function fetchByIds(WoocommerceConnection $connection, array $ids): array
@@ -75,11 +100,24 @@ abstract class AbstractMigrator implements Migrator
     }
 
     /**
+     * Find an object this migrator may ALREADY have created in Shopify, using a
+     * natural key from the source record (a SKU, an email). Only ever called to
+     * recover from an interrupted write — see migrateItem() — so it may cost a
+     * request. Returning null simply means "cannot tell", which is where every
+     * migrator started.
+     */
+    protected function findExisting(StoreMigration $migration, array $wooItem): ?string
+    {
+        return null;
+    }
+
+    /**
      * Template method enforcing idempotency for EVERY migrator:
      *   1. ensure a mapping row exists,
      *   2. skip if already migrated successfully (unless this migrator upserts),
-     *   3. run the concrete migration (passing any known Shopify id),
-     *   4. persist the outcome to the mapping row.
+     *   3. recover the Shopify id if a previous attempt was interrupted mid-write,
+     *   4. run the concrete migration (passing any known Shopify id),
+     *   5. persist the outcome to the mapping row.
      */
     public function migrateItem(StoreMigration $migration, array $wooItem): MigrationItemResult
     {
@@ -96,11 +134,49 @@ abstract class AbstractMigrator implements Migrator
             return MigrationItemResult::skipped($mapping->shopify_id);
         }
 
-        $result = $this->doMigrate($migration, $wooItem, $mapping->shopify_id);
+        $shopifyId = $mapping->shopify_id;
+
+        // A previous attempt reached Shopify but never got back here to record
+        // what it created — the worker was killed, the host rebooted, a deploy
+        // landed. The mapping looks untouched, so the resume would create the
+        // object a SECOND time and leave the merchant with two of everything.
+        // `attempts` is what distinguishes "never started" from "we don't know",
+        // and the only honest way to settle it is to ask Shopify.
+        if (! $shopifyId && $mapping->attempts > 0) {
+            $shopifyId = $this->findExisting($migration, $wooItem);
+
+            if ($shopifyId) {
+                MigrationRunner::log(
+                    $migration->id,
+                    'warning',
+                    $this->entityType(),
+                    "Item {$wooId} had already been created in Shopify by an interrupted run — reusing it instead of creating a duplicate.",
+                );
+
+                // Nothing to update for a migrator that only ever creates: adopt
+                // the object and move on.
+                if (! $this->upserts()) {
+                    $mapping->update([
+                        'migration_id' => $migration->id,
+                        'shopify_id' => $shopifyId,
+                        'status' => 'success',
+                        'error' => null,
+                    ]);
+
+                    return MigrationItemResult::skipped($shopifyId);
+                }
+            }
+        }
+
+        // Recorded BEFORE the write, so an interruption during it is visible to
+        // the recovery above on the next pass.
+        $mapping->forceFill(['attempts' => (int) $mapping->attempts + 1])->save();
+
+        $result = $this->doMigrate($migration, $wooItem, $shopifyId);
 
         $mapping->update([
             'migration_id' => $migration->id,
-            'shopify_id' => $result->shopifyId ?? $mapping->shopify_id,
+            'shopify_id' => $result->shopifyId ?? $shopifyId,
             'status' => $result->status,
             'error' => $result->error,
         ]);
@@ -125,17 +201,24 @@ abstract class AbstractMigrator implements Migrator
      */
     protected function existingMapping(StoreMigration $migration, int $wooId): ?MigrationItem
     {
-        return MigrationItem::firstOrCreate(
-            [
-                'shop_id' => $migration->shop_id,
-                'entity_type' => $this->entityType(),
-                'woocommerce_id' => $wooId,
-            ],
-            [
+        $keys = [
+            'shop_id' => $migration->shop_id,
+            'entity_type' => $this->entityType(),
+            'woocommerce_id' => $wooId,
+        ];
+
+        try {
+            return MigrationItem::firstOrCreate($keys, [
                 'migration_id' => $migration->id,
                 'status' => 'pending',
-            ],
-        );
+            ]);
+        } catch (UniqueConstraintViolationException) {
+            // firstOrCreate is a SELECT then an INSERT, not an atomic operation.
+            // Batches of one entity now run in parallel and the retry job can be
+            // working the same shop, so two callers really do race for the same
+            // row — and the unique key is what stops one of them winning twice.
+            return MigrationItem::where($keys)->firstOrFail();
+        }
     }
 
     /** Look up a previously migrated Shopify gid for a related entity (e.g. product for a variation). */

@@ -48,6 +48,41 @@ class MailSettings
     }
 
     /**
+     * Can this installation actually deliver mail right now?
+     *
+     * The merchant is offered "email me when this finishes" in the wizard, and
+     * until this existed there was nothing stopping them ticking it on an
+     * installation with no SMTP at all — the run would finish, the send would
+     * fail, and the only trace was a warning in a log they were not watching
+     * because they were waiting for the email.
+     *
+     * `log` and `array` mailers count as not configured on purpose: they succeed
+     * without anything reaching the merchant, which is the worst of both.
+     */
+    public static function canDeliver(): bool
+    {
+        try {
+            $stored = self::stored();
+        } catch (Throwable) {
+            $stored = [];
+        }
+
+        if (filled($stored['host'] ?? null)) {
+            return true;
+        }
+
+        $mailer = (string) config('mail.default');
+
+        if (in_array($mailer, ['log', 'array', 'null'], true)) {
+            return false;
+        }
+
+        // Anything that is not SMTP (ses, postmark, resend, …) carries its own
+        // credentials and we cannot usefully second-guess them.
+        return $mailer !== 'smtp' || filled(config('mail.mailers.smtp.host'));
+    }
+
+    /**
      * Persist settings. A blank password keeps the stored one, so the admin can
      * edit the host without re-typing the credential.
      */

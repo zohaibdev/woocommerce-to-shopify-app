@@ -7,8 +7,8 @@ import {
   Button,
   Banner,
   BlockStack,
+  InlineStack,
   Text,
-  Badge,
 } from "@shopify/polaris";
 import { api, type WooConnection } from "../api/client";
 
@@ -18,11 +18,23 @@ export default function WooCommerceConnection() {
   const [consumerSecret, setConsumerSecret] = useState("");
   const [connection, setConnection] = useState<WooConnection | null>(null);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Best-effort load of existing (masked) connection.
-    api.testWoo().then(setConnection).catch(() => undefined);
+    // Reads what is STORED. This used to run a live test() instead, which cost
+    // up to two minutes on a store that had gone away — and because a failed
+    // test answers 422, the result was thrown away and a merchant with a working
+    // connection was shown a blank "connect your store" form.
+    api
+      .getWooConnection()
+      .then((c) => {
+        if (!c) return;
+        setConnection(c);
+        // Prefilled so re-saving credentials does not mean retyping the URL.
+        setStoreUrl(c.store_url);
+      })
+      .catch(() => undefined);
   }, []);
 
   const submit = async () => {
@@ -44,6 +56,23 @@ export default function WooCommerceConnection() {
     }
   };
 
+  const retest = async () => {
+    setTesting(true);
+    setError(null);
+    try {
+      setConnection(await api.testWoo());
+    } catch (e) {
+      setError((e as Error).message);
+      // The test failed, so what is stored is no longer working — say so rather
+      // than leaving a stale green banner sitting above the error.
+      setConnection((c) => (c ? { ...c, status: "error" } : c));
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const canSave = storeUrl.trim() !== "" && consumerKey.trim() !== "" && consumerSecret.trim() !== "";
+
   return (
     <Page title="Connect WooCommerce" backAction={{ content: "Home", url: "/" }}>
       <BlockStack gap="400">
@@ -51,14 +80,32 @@ export default function WooCommerceConnection() {
           <Banner tone="success" title="WooCommerce connected">
             <BlockStack gap="100">
               <Text as="p">Store: {connection.store_url}</Text>
-              <Text as="p">
-                WooCommerce {connection.wc_version} · WordPress {connection.wp_version}
-              </Text>
+              {connection.wc_version && (
+                <Text as="p">
+                  WooCommerce {connection.wc_version} · WordPress {connection.wp_version}
+                </Text>
+              )}
               {connection.last_tested_at && (
                 <Text as="p" tone="subdued">
                   Last tested: {new Date(connection.last_tested_at).toLocaleString()}
                 </Text>
               )}
+            </BlockStack>
+          </Banner>
+        )}
+
+        {connection && connection.status !== "connected" && (
+          <Banner tone="warning" title="This connection is not working">
+            <BlockStack gap="100">
+              <Text as="p">
+                Store: {connection.store_url}
+                {connection.consumer_key_masked ? ` · key ${connection.consumer_key_masked}` : ""}
+              </Text>
+              <Text as="p">
+                The most common cause is API keys that were revoked or that no longer have Read
+                permission. Generate a new key/secret pair in WooCommerce → Settings → Advanced →
+                REST API, then enter them below.
+              </Text>
             </BlockStack>
           </Banner>
         )}
@@ -84,6 +131,11 @@ export default function WooCommerceConnection() {
               value={consumerKey}
               onChange={setConsumerKey}
               placeholder={connection?.consumer_key_masked ?? "ck_..."}
+              helpText={
+                connection
+                  ? "Leave the key and secret blank and use Re-test to check the credentials already saved."
+                  : undefined
+              }
               autoComplete="off"
             />
             <TextField
@@ -94,15 +146,18 @@ export default function WooCommerceConnection() {
               type="password"
               autoComplete="off"
             />
-            <Button variant="primary" loading={saving} onClick={submit}>
-              Test connection
-            </Button>
+            <InlineStack gap="200">
+              <Button variant="primary" loading={saving} disabled={!canSave} onClick={submit}>
+                Save and test
+              </Button>
+              {connection && (
+                <Button loading={testing} onClick={retest}>
+                  Re-test saved connection
+                </Button>
+              )}
+            </InlineStack>
           </FormLayout>
         </Card>
-
-        {connection && connection.status !== "connected" && (
-          <Badge tone="critical">{`Status: ${connection.status}`}</Badge>
-        )}
       </BlockStack>
     </Page>
   );

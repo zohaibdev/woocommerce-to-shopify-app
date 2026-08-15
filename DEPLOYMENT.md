@@ -90,17 +90,77 @@ php artisan config:cache
 php artisan route:cache
 ```
 
+> **Plans are seeded, not overwritten.** The seeder only creates plans that do
+> not exist yet, so prices and limits you set at `/app/admin/plans` survive every
+> deploy. It used to `updateOrCreate`, which silently reset them on each release.
+> To deliberately push a pricing change out from the code instead:
+>
+> ```bash
+> PLAN_SEED_OVERWRITE=true php artisan db:seed --class=AdminSeeder --force
+> ```
+
 ---
 
-## 6. Queue cron (REQUIRED)
+## 6. Queue workers (REQUIRED)
 
-Without this, migrations stay stuck at *pending* forever.
+Without these, migrations stay stuck at *pending* forever.
 
-hPanel → **Advanced → Cron Jobs** → every minute (`* * * * *`):
+### 6.0 Which option to use
+
+| Host | Use |
+|---|---|
+| VPS / anything with root | `deploy/supervisor/store-shift-worker.conf` |
+| Shared hosting (Hostinger) | `deploy/queue-workers.sh` from cron |
+
+**Supervisor** — edit `USER` in the file, then:
 
 ```bash
-cd ~/public_html/app/backend && php artisan queue:work --stop-when-empty --max-time=55
+sudo cp deploy/supervisor/store-shift-worker.conf /etc/supervisor/conf.d/ && sudo supervisorctl reread && sudo supervisorctl update && sudo supervisorctl start store-shift-worker:*
 ```
+
+**Shared hosting** — upload `deploy/queue-workers.sh` to your **home directory**,
+not into `public_html`. Anything under the web root is downloadable, and this
+file names your paths and process layout:
+
+```bash
+chmod +x ~/queue-workers.sh
+```
+
+Then hPanel → **Advanced → Cron Jobs** → every minute (`* * * * *`):
+
+```bash
+/bin/bash ~/queue-workers.sh >> ~/worker-cron.log 2>&1
+```
+
+The script starts workers only up to the target count (default 4, set
+`MIGRATION_WORKERS` to change it), so running it every minute is how a dead
+worker gets replaced. It finds Laravel on its own; if your layout differs, set
+`BACKEND_DIR=/full/path/to/app/backend` in the cron line.
+
+### 6.0.1 Why not the old one-line cron ⚠️
+
+The previous instruction here was:
+
+```
+php artisan queue:work --stop-when-empty --max-time=55
+```
+
+It works, but it is the single biggest reason a large catalogue took all night:
+
+- **One worker.** `ShopifyPlan` reads the shop's real Shopify budget and decides
+  it may run up to 8 batches at once, and `MigrationRunner::advance()` dispatches
+  8 jobs — but a single worker runs them one after another. At roughly 3s per
+  product (`productSet` is synchronous and waits for Shopify to download every
+  image), 50k products is **~42 hours serial vs ~5–6 hours across 8 workers**.
+- **No `--timeout`,** so the worker default of 60s applied to any job that did
+  not set its own. That is exactly how `StartMigrationJob` used to get killed
+  while counting a big store.
+- **`--stop-when-empty` exits mid-run.** The queue looks empty every time the
+  only outstanding job is the one being worked, so the worker quit and the run
+  idled until the next cron minute.
+
+Never set the worker's `--timeout` at or above `DB_QUEUE_RETRY_AFTER` (900) —
+see 6.2.
 
 ### 6.1 Watchdog cron (REQUIRED)
 
@@ -116,7 +176,34 @@ cd ~/public_html/app/backend && php artisan migration:watchdog
 > A batch is only considered stalled after 10 minutes without progress. Override
 > with `--stall=<minutes>` (minimum 2) to recover a stuck run sooner.
 
-### 6.2 `retry_after` must exceed the job runtime ⚠️
+### 6.2 Prune cron (recommended)
+
+Third cron, once a day (`0 3 * * *`). A large run writes a log line per failed or
+warned record, and those rows are worth nothing months later — this deletes the
+activity logs of migrations that finished long ago. Mapping rows in
+`migration_items` are **never** touched: they are what stops a re-run creating
+duplicates.
+
+```bash
+cd ~/public_html/app/backend && php artisan migration:prune
+```
+
+> Keeps 90 days by default. Override with `--days=<n>`.
+
+### 6.3 All three crons at a glance
+
+| Cron | Schedule | Command | Required? |
+|---|---|---|---|
+| Queue workers | `* * * * *` | `/bin/bash ~/queue-workers.sh >> ~/worker-cron.log 2>&1` | **Yes** — nothing migrates without it |
+| Watchdog | `*/5 * * * *` | `cd ~/public_html/app/backend && php artisan migration:watchdog` | **Yes** — nothing recovers without it |
+| Prune | `0 3 * * *` | `cd ~/public_html/app/backend && php artisan migration:prune` | Recommended |
+
+> Do **not** also add Laravel's `schedule:run` cron. `routes/console.php`
+> registers the watchdog on the scheduler, so running both would just start the
+> same command twice — harmless (it is idempotent) but pointless noise. Pick the
+> direct commands above.
+
+### 6.4 `retry_after` must exceed the job runtime ⚠️
 
 `config/queue.php` sets `retry_after` to **900s**. It was 90s, which was shorter
 than a full batch — so the queue declared the job dead mid-run and started a
@@ -169,12 +256,55 @@ Admin panel: `https://shift-shop.webnday.com/app/admin`
 
 ## 9. Redeploying after a change
 
+Run `build-prod.bat` locally first. It type-checks, builds, copies the assets and
+SPA shell into `app/`, **runs the backend test suite**, and only then writes
+`store-shift-deploy.zip`. A red test stops the build before anything is packed.
+
 | Changed | Do |
 |---|---|
-| Frontend | `build-prod.bat` → upload `app/assets/` + `backend/resources/spa/index.html` |
-| Backend PHP | upload files → `php artisan route:clear && php artisan config:cache` |
+| Frontend | upload `app/assets/` (delete the old one first — filenames are hashed) + `app/backend/resources/spa/index.html` |
+| Backend PHP | upload the changed files → `php artisan route:clear && php artisan config:cache` |
 | `.env` | edit → `php artisan config:cache` (otherwise the change is ignored) |
 | DB schema | `php artisan migrate --force` |
+| Queue/worker scripts | re-upload `~/queue-workers.sh`, then kill the running workers so they restart on the new settings |
+
+### 9.1 After ANY backend deploy ⚠️
+
+```bash
+pkill -f "artisan queue:work"
+```
+
+PHP holds the old classes in memory for the life of the worker process, so a
+worker started before the deploy keeps running the **old code** until it hits its
+`--max-time` (up to an hour). The cron restarts them within a minute. On
+supervisor: `sudo supervisorctl restart store-shift-worker:*`.
+
+### 9.2 Deploying the scale-hardening release
+
+This release adds a schema change and new worker configuration, so the order
+matters:
+
+```bash
+# 1. upload app/assets/, app/backend/resources/spa/index.html, and the changed
+#    backend PHP files, then:
+cd ~/public_html/app/backend
+php artisan migrate --force        # adds migration_batches.source_ids
+php artisan config:cache
+php artisan route:cache
+
+# 2. restart workers onto the new code
+pkill -f "artisan queue:work"
+```
+
+Then set up the crons in §6.3 — the queue-worker one **replaces** the old
+single-worker line, it is not added alongside it.
+
+Nothing here needs a re-seed: `AdminSeeder` no longer overwrites existing plans,
+so the Pro plan's shared 20,000-record budget only applies to installs that do
+not have a `pro` row yet. To move an existing install onto it, edit the plan at
+`/app/admin/plans` and set `limits` to `{"total": 20000, "metafields": true}`, or
+run the seeder once with `PLAN_SEED_OVERWRITE=true` (§5) — which resets **every**
+plan to the code values, so only do that if that is what you want.
 
 ---
 
@@ -188,6 +318,11 @@ Admin panel: `https://shift-shop.webnday.com/app/admin`
 | API 401 everywhere | `.htaccess` missing → `Authorization` header stripped |
 | Migration stuck *pending* | Queue cron (§6) not running |
 | Migration stuck *processing*, no errors | Watchdog cron (§6.1) not running — run `php artisan migration:watchdog --stall=2` |
-| Progress % higher than reality | Stale deploy: needs `retry_after` ≥ 600 (§6.2) + `php artisan config:cache` |
+| Progress % higher than reality | Stale deploy: needs `retry_after` ≥ 600 (§6.4) + `php artisan config:cache` |
+| Migration marked *failed* seconds after starting | Planning could not read the store. Check the activity log for the WooCommerce error — expired API keys are the usual cause |
+| Run ends *completed with errors* but no failed items listed | Whole batches could not be read. The details page names them; "Retry failed items" re-runs them (§6 workers must be up) |
+| Old behaviour after a deploy | Workers still running pre-deploy code — `pkill -f "artisan queue:work"` (§9.1) |
+| Only one batch runs at a time | Still on the old single-worker cron. Replace it with §6.3's `~/queue-workers.sh` line |
+| Plan limits reset after a deploy | Someone ran the seeder with `PLAN_SEED_OVERWRITE=true` (§5) |
 | `.env` edit ignored | Run `php artisan config:cache` |
 | `backend/composer.json` returns 200 | `backend/.htaccess` missing or still named `.txt` |

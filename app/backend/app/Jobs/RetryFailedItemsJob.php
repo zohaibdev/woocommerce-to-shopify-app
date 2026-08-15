@@ -5,10 +5,12 @@ namespace App\Jobs;
 use App\Migration\MigrationItemResult;
 use App\Migration\MigrationRunner;
 use App\Migration\MigratorRegistry;
+use App\Models\MigrationBatch;
 use App\Models\MigrationEntity;
 use App\Models\MigrationItem;
 use App\Models\StoreMigration;
 use App\Services\Exceptions\ShopifyThrottledException;
+use App\Support\SourceHealth;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -57,12 +59,24 @@ class RetryFailedItemsJob implements ShouldQueue
             return;
         }
 
+        SourceHealth::within($migration->id);
+
+        // Whole batches that never got read come first — see reviveFailedBatches().
+        $this->reviveFailedBatches($migration);
+
+        // Only the entity type and source id are needed to re-fetch from
+        // WooCommerce. Hydrating whole models here put every failed row of a large
+        // run into one job's memory at once.
         $failed = MigrationItem::where('migration_id', $migration->id)
             ->where('status', 'failed')
+            ->select('entity_type', 'woocommerce_id')
             ->get()
             ->groupBy('entity_type');
 
         if ($failed->isEmpty()) {
+            // Finalize hands straight back to the runner when batches are
+            // outstanding, so a run whose only problem was failed batches starts
+            // moving again from here.
             FinalizeMigrationJob::dispatch($migration->id);
 
             return;
@@ -110,6 +124,56 @@ class RetryFailedItemsJob implements ShouldQueue
         FinalizeMigrationJob::dispatch($migration->id);
     }
 
+    /**
+     * Put failed BATCHES back in the queue.
+     *
+     * A batch fails as a whole when its WooCommerce page could not be read at all
+     * — the deep-offset timeout that a large catalogue produces, a host that went
+     * away mid-run. When that happens the item loop never ran, so those records
+     * have no rows in migration_items: not as failed, not as anything.
+     *
+     * That made them invisible to every recovery path there is. The counters could
+     * not see them, this job's failed-item query returned nothing, and the log
+     * download printed "FAILED ITEMS (0)" while a hundred products were missing
+     * from the merchant's store. The only remedy was re-running the entire
+     * migration, and nothing in the app said so.
+     *
+     * So the batch itself is the unit that gets retried. `processed_offset` is
+     * left exactly where it was, so a batch that failed halfway resumes rather
+     * than replaying; `attempts` is reset because this is a deliberate, merchant-
+     * initiated fresh start rather than another automatic go.
+     */
+    private function reviveFailedBatches(StoreMigration $migration): void
+    {
+        $failedBatches = MigrationBatch::where('migration_id', $migration->id)
+            ->where('status', 'failed')
+            ->get();
+
+        if ($failedBatches->isEmpty()) {
+            return;
+        }
+
+        foreach ($failedBatches as $batch) {
+            $batch->update([
+                'status' => 'pending',
+                'attempts' => 0,
+                'error' => null,
+            ]);
+        }
+
+        $byEntity = $failedBatches
+            ->groupBy('entity_type')
+            ->map(fn ($rows, $type) => $rows->count()." {$type}")
+            ->implode(', ');
+
+        MigrationRunner::log(
+            $migration->id,
+            'info',
+            null,
+            "Re-queued {$failedBatches->count()} batch(es) whose records were never read from WooCommerce ({$byEntity}).",
+        );
+    }
+
     /** @return bool false when the chunk was postponed for throttling */
     private function retryChunk(
         StoreMigration $migration,
@@ -139,6 +203,14 @@ class RetryFailedItemsJob implements ShouldQueue
             MigrationRunner::log($migration->id, 'warning', $entityType, "Item {$missing} no longer exists in WooCommerce — skipped.");
         }
 
+        // Same bulk lookups a normal batch gets — without this a retried product
+        // would ship full-size images even though the merchant asked for smaller.
+        if (method_exists($migrator, 'prefetchPage')) {
+            $migrator->prefetchPage($migration, $items);
+        }
+
+        $recovered = 0;
+
         foreach ($items as $wooItem) {
             $wooId = $migrator->sourceId($wooItem);
 
@@ -152,13 +224,21 @@ class RetryFailedItemsJob implements ShouldQueue
                 $result = MigrationItemResult::failed($e->getMessage());
             }
 
+            // Only failures and warnings get a line of their own. A per-item
+            // "migrated on retry" note meant retrying a 50,000-record run wrote
+            // 50,000 log rows nobody reads — the recovered count below says the
+            // same thing in one line.
             if ($result->status === 'failed') {
                 MigrationRunner::log($migration->id, 'error', $entityType, "Retry of item {$wooId} failed: {$result->error}");
             } elseif ($result->warning) {
                 MigrationRunner::log($migration->id, 'warning', $entityType, "Item {$wooId}: {$result->warning}");
             } else {
-                MigrationRunner::log($migration->id, 'info', $entityType, "Item {$wooId} migrated on retry.");
+                $recovered++;
             }
+        }
+
+        if ($recovered > 0) {
+            MigrationRunner::log($migration->id, 'info', $entityType, "{$recovered} item(s) migrated on retry.");
         }
 
         return true;

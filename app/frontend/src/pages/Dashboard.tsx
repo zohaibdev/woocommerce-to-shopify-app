@@ -37,6 +37,7 @@ import {
   type ContentItem,
 } from "../api/client";
 import { loadSettings } from "../settings";
+import { openExternal, redirectTop } from "../navigation";
 
 const STAT_META: Record<string, { label: string; icon: typeof ProductIcon }> = {
   product: { label: "Products", icon: ProductIcon },
@@ -118,41 +119,84 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
+    // The interval below is created AFTER two awaits, so by the time it exists
+    // the cleanup for this run of the effect may already have happened —
+    // React's StrictMode mounts, unmounts and remounts on purpose, and every
+    // remount used to leave its predecessor's timer running against the API
+    // forever. Measured: three overlapping pollers on a freshly loaded page,
+    // growing by one on every return to the dashboard.
+    let cancelled = false;
+
     (async () => {
       try {
         const s = await api.getShop();
+
+        if (cancelled) return;
         setShop(s);
 
         // Content is admin-managed; never let it block the dashboard.
-        api.content().then(({ data }) => setContent(data)).catch(() => undefined);
+        api
+          .content()
+          .then(({ data }) => {
+            if (!cancelled) setContent(data);
+          })
+          .catch(() => undefined);
+
         if (s.woocommerce_connected) {
           // Migrations are fast (DB) — gate the page on these only.
           const { data } = await api.listMigrations();
+
+          if (cancelled) return;
           setMigrations(data);
+
           const active = data.find((m) => ACTIVE.includes(m.status));
           if (active) {
             setRunning(active);
             timer.current = window.setInterval(() => pollRunning(active.id), 3000);
           }
+
           // Counts hit the live WooCommerce API and can be slow — load them
           // separately so they never block the dashboard from rendering.
           setCountsLoading(true);
           api
             .preview()
-            .then(({ counts }) => setCounts(counts))
+            .then(({ counts }) => {
+              if (!cancelled) setCounts(counts);
+            })
             .catch(() => undefined)
-            .finally(() => setCountsLoading(false));
+            .finally(() => {
+              if (!cancelled) setCountsLoading(false);
+            });
         }
       } catch (e) {
-        setError((e as Error).message);
+        if (!cancelled) setError((e as Error).message);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
+
     return () => {
-      if (timer.current) window.clearInterval(timer.current);
+      cancelled = true;
+
+      if (timer.current) {
+        window.clearInterval(timer.current);
+        timer.current = null;
+      }
     };
   }, [pollRunning]);
+
+  /**
+   * The run in flight, if any.
+   *
+   * `shop.active_migration_id` is only correct as of page load, so once polling
+   * has an opinion it wins — otherwise finishing a migration left the dashboard
+   * insisting one was still running until the merchant reloaded.
+   */
+  const activeMigrationId = running
+    ? ACTIVE.includes(running.status)
+      ? running.id
+      : null
+    : (shop?.active_migration_id ?? null);
 
   const statCards = ["product", "category", "order", "customer"].map((type) => {
     const meta = STAT_META[type];
@@ -229,7 +273,14 @@ export default function Dashboard() {
       title="Home"
       primaryAction={
         shop?.woocommerce_connected
-          ? { content: "Start new migration", onAction: () => navigate("/migrations/new") }
+          ? activeMigrationId
+            ? {
+                // Only one run at a time: the API refuses a second one, so
+                // offering the button would only ever produce an error.
+                content: "View running migration",
+                onAction: () => navigate(`/migrations/${activeMigrationId}`),
+              }
+            : { content: "Start new migration", onAction: () => navigate("/migrations/new") }
           : undefined
       }
     >
@@ -261,9 +312,10 @@ export default function Dashboard() {
               title="App update available"
               action={{
                 content: "Update app",
-                onAction: () => {
-                  (window.top ?? window).location.href = shop.reauth_url;
-                },
+                // Assigning window.top.location throws a SecurityError inside the
+                // admin iframe, which unmounted the whole app instead of
+                // redirecting. See navigation.ts.
+                onAction: () => redirectTop(shop.reauth_url),
               }}
             >
               This app needs additional permissions ({shop.missing_scopes.join(", ")}). Update the
@@ -383,7 +435,7 @@ export default function Dashboard() {
                     <ResourceList
                       items={migrations.slice(0, 5)}
                       renderItem={(m) => (
-                        <ResourceItem id={String(m.id)} onClick={() => navigate(`/migrations/${m.id}`)}>
+                        <ResourceItem key={m.id} id={String(m.id)} onClick={() => navigate(`/migrations/${m.id}`)}>
                           <InlineStack align="space-between" blockAlign="center">
                             <BlockStack gap="050">
                               <Text as="span" fontWeight="semibold">
@@ -417,7 +469,7 @@ export default function Dashboard() {
                           Get help
                         </Button>
                         {supportUrl && (
-                          <Button onClick={() => window.open(supportUrl, "_blank")}>
+                          <Button onClick={() => openExternal(supportUrl)}>
                             Contact support
                           </Button>
                         )}

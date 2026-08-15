@@ -1,8 +1,7 @@
 {
   "$comment": "Machine-readable project context for Claude. Read this FIRST in a new chat — it replaces re-exploring the codebase. Keep it updated when architecture changes. Secrets are NEVER stored here; see `secrets_location`.",
   "schema_version": "1.0",
-  "last_updated": "2026-08-12",
-
+  "last_updated": "2026-08-15",
   "project": {
     "name": "Store Shift",
     "what_it_is": "Embedded Shopify app that migrates a merchant's WooCommerce store data into their Shopify store.",
@@ -14,7 +13,6 @@
     "local_path": "C:/Users/Zohaib/Documents/Edits/store-shift",
     "git_remote": "https://github.com/zohaibdev/store-shift.git"
   },
-
   "golden_rules": [
     "Migrations NEVER run inside an HTTP request — always queued jobs.",
     "Everything is chunked: WooCommerce paginated, Shopify batched.",
@@ -24,7 +22,6 @@
     "All credentials encrypted at rest, never returned to the client (masked).",
     "Multi-tenant: every query scoped by shop_id."
   ],
-
   "tech_stack": {
     "backend": "Laravel 12 (PHP 8.2)",
     "frontend": "React 18 + Vite + TypeScript + Shopify Polaris + App Bridge",
@@ -34,13 +31,12 @@
     "shopify_api": "Admin GraphQL API, version 2026-01",
     "woocommerce_api": "REST API v3"
   },
-
   "folder_structure": {
     "note": "The repo mirrors the production layout exactly. `app/` is the deployable web root.",
     "local": {
       "store-shift/index.html": "Public landing page (plain HTML/CSS, no build step). Contains an embed guard: if opened with host/embedded/billing params it redirects to /app/, so the marketing page can never render inside the Shopify admin iframe.",
-    "store-shift/site.css": "Shared stylesheet for ALL public pages (landing, legal, docs, contact)",
-    "store-shift/privacy|terms|refund|contact|developers/index.html": "Public pages served at clean URLs via directory index — no .htaccess rewrite needed, so /app is never affected. privacy/ is the URL Shopify requires for the listing.",
+      "store-shift/site.css": "Shared stylesheet for ALL public pages (landing, legal, docs, contact)",
+      "store-shift/privacy|terms|refund|contact|developers/index.html": "Public pages served at clean URLs via directory index — no .htaccess rewrite needed, so /app is never affected. privacy/ is the URL Shopify requires for the listing.",
       "store-shift/app/index.php": "PRODUCTION front controller — paths point to ./backend/ (NOT ../)",
       "store-shift/app/.htaccess": "Laravel rewrite rules",
       "store-shift/app/assets/": "Built JS/CSS (copied from frontend/dist/assets)",
@@ -58,7 +54,6 @@
       "document_root": "public_html"
     }
   },
-
   "architecture": {
     "two_surfaces": {
       "merchant_app": "Embedded in Shopify admin at /app/. Auth = Shopify session token (JWT).",
@@ -77,14 +72,15 @@
       "base_class": "AbstractMigrator — template method enforcing idempotency for every migrator",
       "registry": "MigratorRegistry — resolves + topologically orders entities by dependency",
       "job_graph": "StartMigrationJob (plans counts + batches) -> ProcessBatchJob per page, each SELF-ADVANCING to the next via MigrationRunner::advance() -> FinalizeMigrationJob. NOT a Bus chain any more: a chain died at the first failed batch and froze the whole migration.",
-      "resilience": "Batches are resumable (migration_batches.processed_offset) and time-bounded (35s, then re-dispatch a fresh job). Counters are DERIVED from migration_items by MigrationRunner::syncCounters(), never incremented, so a replayed batch cannot inflate progress. `php artisan migration:watchdog` (cron every 5 min) resumes anything that stalled.",
+      "resilience": "Batches are resumable (migration_batches.processed_offset) and time-bounded (35s, then hand off to a fresh job). Counters are DERIVED from migration_items by MigrationRunner::syncCounters(), never incremented, so a replayed batch cannot inflate progress. `php artisan migration:watchdog` (cron every 5 min) resumes anything that stalled.",
+      "batch_addressing": "A batch resolves itself ONCE to a fixed list of WooCommerce ids (migration_batches.source_ids, via Migrator::listSourceIds -> `_fields=id`) and fetches records with `include=` from then on. Page/offset paging becomes a deep SQL OFFSET inside WordPress, so page 500 of a 50k catalogue was both the slowest query on the site and the one most likely to blow the 60s client timeout — and the 35s budget made every resume pay it again. Pinned ids also make the chunk STABLE: a record deleted mid-run leaves a null in its own slot (recorded as skipped, 'No longer exists in WooCommerce') instead of shifting every later record one place left past a resume's offset. source_ids null => falls back to the original page/offset path (older batches, sources that refuse the id listing).",
+      "batch_leasing": "A job that runs out of time (or waits out a throttle) does NOT release the batch — it stays 'processing' and the current `attempts` value travels to the successor as a fencing token (ProcessBatchJob::$lease). Flipping the row to 'pending' left a window where the chunk looked free: inFlight() undercounted and a concurrent advance() handed the same chunk out again. claim() accepts a leased job only while attempts is unchanged, so a batch the watchdog revived is never worked by two jobs at once.",
       "field_shedding": "ShedsRejectedFields trait (replaces the old SurvivesMediaFailures/SurvivesFieldRejections). On a userError the migrator drops the OPTIONAL field Shopify complained about and retries, up to 3 rounds, then records the record with a warning naming what was left behind. Required fields are never shed and a MIXED error set still fails the item, so real problems stay visible. Per-migrator optional lists: product = files/metafields/collections/tags/vendor/productType/descriptionHtml; category = image/descriptionHtml; customer = phone/addresses/tags; order = transactions/shippingAddress/billingAddress/shippingLines/tags/note/processedAt.",
       "media_short_circuit": "After 5 products have their images rejected in one run, ProductMigrator stops sending images entirely for that migration (cache flag migration:{id}:media_unreachable) — halves the Shopify calls on a store whose /uploads is gone, and logs a warning explaining it.",
       "idempotency": "migration_items table, unique (shop_id, entity_type, woocommerce_id)",
       "upsert": "ProductMigrator and CategoryMigrator upsert (update existing, recreate if deleted in Shopify). Others skip if already successful."
     }
   },
-
   "migrators": {
     "ACTIVE": {
       "ProductMigrator": "Uses Shopify productSet. Migrates title, description, vendor, productType, status, tags, prices, compareAtPrice, SKU, inventory + tracking, weight (+unit), requiresShipping, variants + options, product AND variant images, metafields, brands, collection links. Variants/images are INLINE here.",
@@ -98,9 +94,13 @@
       "MediaMigrator": "Does nothing — images are inline in ProductMigrator",
       "why": "These were removed from the wizard UI because selecting them created no-op jobs and inflated estimates. Registry still accepts them so old migrations don't break."
     },
-    "wizard_entities_shown_to_merchant": ["product", "category", "customer", "order"]
+    "wizard_entities_shown_to_merchant": [
+      "product",
+      "category",
+      "customer",
+      "order"
+    ]
   },
-
   "services": {
     "ShopifyClient": "GraphQL client. Handles 429/THROTTLED, normalizes `errors` (Shopify sometimes returns a STRING not an array), sends variables as object not array, refreshes token before each call.",
     "ShopifyOAuth": "Shop-domain validation, HMAC verification (OAuth + webhooks), authorize URL, scope diffing (write_X implies read_X).",
@@ -110,13 +110,12 @@
     "ShopifyBilling": "appSubscriptionCreate, confirmation URL, activate on callback, cancel. Free plans recorded locally without touching Shopify.",
     "WooCommerceClient": "REST v3 wrapper. Retries only transient failures (never 4xx). X-WP-Total for counts."
   },
-
   "database_tables": {
     "shops": "shopify_domain, access_token(enc), refresh_token(enc), token_expires_at, refresh_token_expires_at, scopes, installed_at, uninstalled_at",
     "woocommerce_connections": "store_url, consumer_key(enc), consumer_secret(enc), status, wc_version, wp_version",
     "store_migrations": "NOTE: named store_migrations (NOT migrations — that's Laravel's own table). name, status, selected_entities(json), options(json: custom_tags, default_vendor, weight_unit)",
     "migration_entities": "per-entity counters (total/processed/successful/failed)",
-    "migration_batches": "one row per chunk/page",
+    "migration_batches": "one row per chunk/page. source_ids(json, nullable) pins the exact Woo ids the chunk owns; processed_offset is a position within that pinned list",
     "migration_items": "IDEMPOTENCY MAPPING. unique(shop_id, entity_type, woocommerce_id) -> shopify_id",
     "migration_logs": "info/warning/error per migration",
     "admin_users": "super admin, api_token_hash (sha256)",
@@ -126,29 +125,78 @@
     "dashboard_contents": "admin-managed content shown in the merchant app",
     "app_settings": "admin-editable app config. One ENCRYPTED json blob per key: 'mail' = SMTP (overrides .env at boot via MailSettings::apply()), 'branding' = email logo + name (App\\Services\\Branding). The logo file lives in storage/app/branding and is streamed by the public GET /api/branding/logo route, so no storage:link is needed."
   },
-
   "plans_and_limits": {
-    "source_of_truth": "plans table (DB), editable from /app/admin/plans — no deploy needed",
+    "source_of_truth": "plans table (DB), editable from /app/admin/plans — no deploy needed. AdminSeeder now only CREATES missing plans; it used to updateOrCreate, and the deploy runbook runs it every release, so every price and cap an admin had set was silently reset by unrelated deploys. Use PLAN_SEED_OVERWRITE=true to deliberately push code values back out.",
     "limit_semantics": {
       "null": "unlimited",
       "0": "feature not included in the plan",
-      "number": "hard cap"
+      "number": "hard cap",
+      "total": "SHARED record budget across product+customer+order (App\\Support\\PlanPool). When present it is what meters the plan; per-entity keys still apply on top and the tighter wins. Categories are NEVER metered.",
+      "contact_only": "true => negotiated off-platform. POST /api/billing/subscribe 422s with contact_only:true, and Pricing shows 'Contact us' instead of an Upgrade button."
     },
+    "pool_rules": [
+      "The pool counts DISTINCT records (migration_items is unique per shop+entity+source id), so re-migrating something already migrated costs nothing — otherwise a 15k-product shop under a 20k pool could re-run exactly once and then be refused forever.",
+      "Entities claim in REGISTRY DEPENDENCY ORDER, first come first served; an entity's ceiling is 'what is already mine' + 'what is left of the pool'. StartMigrationJob and the /preview endpoint claim in the same order so the wizard never promises a number the run contradicts.",
+      "GET /api/woocommerce/preview snapshots the pool BEFORE claiming, because 'remaining' must mean unspent-right-now, not the state after a hypothetical full allocation."
+    ],
     "enforcement": "StartMigrationJob caps each entity total to the plan limit and writes a warning to migration_logs. Shop::limitFor() maps entity -> limit key.",
     "default_plans": {
-      "starter": { "price": 0, "products": 10, "customers": 10, "orders": 0, "metafields": false },
-      "basic": { "price": 19, "products": 2000, "customers": 2000, "orders": 1000, "metafields": true },
-      "pro": { "price": 49, "products": 20000, "customers": 20000, "orders": 20000, "metafields": true },
-      "enterprise": { "price": 149, "products": null, "customers": null, "orders": null, "metafields": true }
+      "starter": {
+        "price": 0,
+        "products": 10,
+        "customers": 10,
+        "orders": 0,
+        "metafields": false
+      },
+      "basic": {
+        "price": 19,
+        "products": 2000,
+        "customers": 2000,
+        "orders": 1000,
+        "metafields": true
+      },
+      "pro": {
+        "price": 49,
+        "total": 20000,
+        "metafields": true,
+        "$comment": "ONE budget of 20,000 records across products+customers+orders, not 20,000 of each. Three separate caps made the headline number meaningless — a 20k-product store and a 60k-records-across-three store bought the same plan."
+      },
+      "enterprise": {
+        "price": 149,
+        "products": null,
+        "customers": null,
+        "orders": null,
+        "metafields": true,
+        "contact_only": true
+      }
     },
     "fallback": "A shop with no active subscription automatically gets the 'starter' plan."
   },
-
   "frontend_pages": {
-    "merchant": ["Dashboard", "WooCommerceConnection", "NewMigration", "MigrationHistory", "MigrationDetails", "Pricing", "Support", "Settings", "InstallPrompt"],
-    "admin": ["AdminLogin", "AdminOverview", "AdminStores", "AdminStoreDetail", "AdminPlans", "AdminMigrations", "AdminErrors", "AdminTickets", "AdminContent", "AdminSettings"]
+    "merchant": [
+      "Dashboard",
+      "WooCommerceConnection",
+      "NewMigration",
+      "MigrationHistory",
+      "MigrationDetails",
+      "Pricing",
+      "Support",
+      "Settings",
+      "InstallPrompt"
+    ],
+    "admin": [
+      "AdminLogin",
+      "AdminOverview",
+      "AdminStores",
+      "AdminStoreDetail",
+      "AdminPlans",
+      "AdminMigrations",
+      "AdminErrors",
+      "AdminTickets",
+      "AdminContent",
+      "AdminSettings"
+    ]
   },
-
   "plan_gating": {
     "source": "App\\Support\\PlanAllowance::forEntity() — one verdict per entity",
     "returned_by": "GET /api/woocommerce/preview (each count carries limit/used/remaining/migratable/locked/exhausted/reason) + a `plan` object",
@@ -158,9 +206,9 @@
       "exhausted": "cap spent AND more source records exist than the cap will ever reach (a fully-migrated store inside the cap is NOT exhausted — re-running refreshes it)",
       "capped": "count > limit — still selectable, migrates the first `limit`"
     },
-    "enforcement": "POST /api/migrations returns 422 for locked entities; StartMigrationJob caps totals; ProcessBatchJob slices each page to the remaining allowance"
+    "enforcement": "POST /api/migrations returns 422 for locked entities; StartMigrationJob caps totals (per-entity limit AND the shared pool); ProcessBatchJob slices each page to the remaining allowance",
+    "pool_ui": "GET /api/woocommerce/preview carries a top-level `pool` object ({limit,used,remaining,entities}) plus `pooled:true` on each metered count. NewMigration shows a banner with the one number, what is left, that re-running is free, and a 'Contact support' action for going past it. Pricing renders a pooled plan as 'N records total' rather than three separate lines."
   },
-
   "auth": {
     "merchant": {
       "flow": "OAuth at /api/auth -> /api/auth/callback -> embedded admin",
@@ -176,7 +224,6 @@
     },
     "scopes": "write_products,write_customers,read_products,read_customers,write_inventory,read_orders,write_orders"
   },
-
   "known_gotchas": [
     {
       "issue": "PowerShell Compress-Archive writes BACKSLASHES into zip entries",
@@ -273,9 +320,73 @@
     {
       "issue": "SSL cert failure on Windows dev (cURL error 60)",
       "fix": "curl.cainfo + openssl.cafile set in php.ini to a cacert.pem"
+    },
+    {
+      "issue": "migration_logs.message was VARCHAR(255)",
+      "symptom": "Batches fail on MySQL only; every test passes locally",
+      "cause": "A Shopify userError set encoded as JSON exceeds 255 chars. MySQL strict mode THROWS on the insert, and MigrationRunner::log() is called from inside the item loop OUTSIDE its try/catch — so one long error killed the whole batch job. SQLite ignores varchar lengths, which is why the suite never saw it.",
+      "fix": "Column is TEXT (2026_08_15_000002). MigrationRunner::log() also truncates to 8000 chars and can no longer throw at all."
+    },
+    {
+      "issue": "A store that does not send X-WP-Total migrated nothing and reported success",
+      "cause": "WooCommerceClient::total() returned 0 when the header was missing (security plugins, caching proxies and Cloudflare all strip it), and 0 reads as 'nothing to migrate'.",
+      "fix": "total() falls back to countByProbe(): exponential + binary search for the last page, ~2·log2(pages) requests, _fields=id only. A NON-2xx now throws WooCommerceUnavailableException instead of returning 0, so expired API keys are reported rather than shown as an empty catalogue."
+    },
+    {
+      "issue": "Two migrations running at once corrupted both progress bars",
+      "cause": "migration_items is unique per (shop, entity, source id), so the second run CLAIMED the first run's mapping rows by rewriting migration_id. Counters are derived from those rows, so one run's progress travelled backwards while the other inflated.",
+      "fix": "POST /api/migrations returns 409 while the shop has a run in ACTIVE_STATES. /api/shop, /api/woocommerce/preview and the migrations list all carry active_migration_id so the UI hides 'New migration' and the wizard redirects."
+    },
+    {
+      "issue": "A batch throttled forever, and the migration never finished",
+      "cause": "A ShopifyThrottledException re-dispatched a FRESH job, resetting $tries — nothing bounded the loop. ShopifyClient::looksRateLimited() also scanned the whole response body, so a product titled 'Throttled' parked the batch for 60s, permanently.",
+      "fix": "looksRateLimited() only reads userErrors[].message. ProcessBatchJob gives up after 10 throttle pauses that migrated NOTHING (progress resets the counter), marks the batch failed and advances."
+    },
+    {
+      "issue": "A worker killed mid-write created the product twice on resume",
+      "cause": "AbstractMigrator wrote the mapping AFTER the Shopify call, so an interrupted item looked identical to one never started, and productSet ran again with no id.",
+      "fix": "migration_items.attempts is written BEFORE the write. On resume, attempts>0 with no shopify_id triggers findExisting() — ProductMigrator looks up by SKU then handle, CustomerMigrator by email — and the existing object is adopted."
+    },
+    {
+      "issue": "window.top.location.href blanked the app",
+      "symptom": "Clicking 'Update app', 'Re-authorize' or 'Subscribe' showed an empty panel",
+      "cause": "Assigning window.top.location throws a SecurityError from a cross-origin iframe, which is where the app always runs. React unmounted the tree.",
+      "fix": "src/navigation.ts redirectTop() goes through window.open(url, '_top') (App Bridge intercepts it) with fallbacks. Also a top-level ErrorBoundary so no render error can ever blank the app again."
+    },
+    {
+      "issue": "The dashboard ran three status pollers at once",
+      "cause": "The interval was created after two awaits, so StrictMode's mount/unmount/remount left the earlier timers running. One more leaked on every return to the page.",
+      "fix": "A `cancelled` flag in the effect; verified at one interval in the browser."
+    },
+    {
+      "issue": "The WooCommerce page showed a blank connect form for a connected store",
+      "cause": "It loaded itself by running a live test(), which answers 422 when credentials fail — the client caught and discarded it. It also cost up to two minutes on a store that had gone away.",
+      "fix": "New GET /api/woocommerce/connection reads the stored (masked) connection with no network call. A failed test still returns the connection plus the reason."
+    },
+    {
+      "issue": "The largest stores could never START a migration",
+      "symptom": "'Could not start the migration' on a big catalogue; the watchdog never picks it up either",
+      "cause": "StartMigrationJob was the only job with no $timeout, so it inherited the WORKER's 60s default. Planning is one count() per entity — each an HTTP call with a 60s client timeout and 3 retries — plus, on a store that hides X-WP-Total, a ~20-request page probe whose probes are deliberately the deepest pages on the site. Minutes, not seconds. Killed at 60s, retried 3x, then failed() marked the run 'failed', and migration:watchdog only sweeps pending/processing.",
+      "fix": "StartMigrationJob::$timeout = 600 (under retry_after 900). FinalizeMigrationJob::$timeout = 180 for the SMTP hand-off. BatchRecoveryTest locks the bound in both directions."
+    },
+    {
+      "issue": "A batch whose Woo page could not be read lost its records with no way back",
+      "symptom": "Run ends 'completed_with_errors', report says 'FAILED ITEMS (0)', 'Retry failed items' does nothing, and ~100 products are simply missing from Shopify",
+      "cause": "A batch fails as a WHOLE when fetchPage() gives up, so the item loop never ran and those records have no migration_items rows at all — invisible to syncCounters, to RetryFailedItemsJob's failed-item query, and to every list in the UI.",
+      "fix": "RetryFailedItemsJob::reviveFailedBatches() puts failed BATCHES back to pending (offset kept, attempts reset) before doing items; FinalizeMigrationJob hands back to advance() when batches are outstanding. POST /retry-failed no longer 422s when only batches failed, /api/migrations carries `failed_batches`, MigrationDetails shows a warning banner + retry, and the log download has an 'UNREAD BATCHES' section naming the record ranges."
+    },
+    {
+      "issue": "The watchdog was blinded by one healthy batch",
+      "symptom": "Seven of eight parallel batches dead, migration frozen, watchdog reports nothing wrong",
+      "cause": "nudge() looked at MigrationRunner::nextBatch() — the single OLDEST pending-or-processing row. If that one had a fresh updated_at it returned early for the whole migration. It also revived one batch per invocation, so eight dead batches took eight 5-minute cron cycles.",
+      "fix": "reviveStalled() resets EVERY 'processing' batch past the cutoff at once (logging the first 10, then a summary line). 'pending' is deliberately not swept — a run plans every batch up front, so hundreds legitimately sit queued for hours. unstickIdle() covers the separate case where work is outstanding but nothing at all is holding it."
+    },
+    {
+      "issue": "Telemetry could kill a migration",
+      "cause": "SourceHealth::record() and the page cache write straight through the Cache facade — which is the DATABASE store in production — so an oversized blob or a locked table threw out of the middle of a WooCommerce request and failed the batch.",
+      "fix": "App\\Support\\SafeCache for every cache use that is an optimisation. SourceHealth::record() is wrapped whole. Cached page limit lowered to 1MB."
     }
   ],
-
   "blockers_to_going_live": [
     {
       "item": "Protected Customer Data (PCD) approval",
@@ -312,9 +423,13 @@
       "item": "Public WooCommerce test store for the reviewer",
       "status": "NOT CREATED",
       "impact": "Reviewer cannot test the app; common rejection reason"
+    },
+    {
+      "item": "Persistent queue workers (supervisor, or Redis + Horizon)",
+      "status": "CONFIG WRITTEN, NOT YET DEPLOYED — `deploy/supervisor/store-shift-worker.conf` (8 procs, VPS) and `deploy/queue-workers.sh` (cron keeper for shared hosting, MIGRATION_WORKERS=4 default). DEPLOYMENT.md §6 now documents both.",
+      "impact": "ShopifyPlan derives up to 8 parallel workers from the shop's real API budget, but the old single cron-launched `queue:work --stop-when-empty --max-time=55` ran them one after another — ~42h serial vs ~5-6h across 8 workers on 50k products. That cron also passed no --timeout (worker default 60s applied to any job without its own) and --stop-when-empty quit mid-run every time the queue momentarily emptied. Still needs to actually be installed on the server."
     }
   ],
-
   "not_built_yet": {
     "high_value_ideas": [
       "Migration preview / dry-run (show what WILL happen before starting) — highest trust win",
@@ -327,10 +442,10 @@
     "smaller_gaps": [
       "Order line items are custom lines, not linked to migrated product variants",
       "Redis + Horizon (currently database queue)",
-      "Some dashboard_contents types have no display surface (useful_link, email_info, other_resource)"
+      "Some dashboard_contents types have no display surface (useful_link, email_info, other_resource)",
+      "Batches now fetch by id (see architecture.migration_engine.batch_addressing), but RESOLVING a batch to its ids is still one `_fields=id` page request at that page's offset. That request is far cheaper than a full page (no images/meta/variation assembly) and is paid once per batch instead of once per resume, but it is still an OFFSET. True keyset paging is not available: Woo REST v3 has no after_id on products. Collecting every id in one up-front pass would remove even that, at the cost of making planning a resumable multi-job phase."
     ]
   },
-
   "commands": {
     "local_dev_all": "start-dev.bat (backend :8000, queue worker, vite :5173, cloudflared tunnel)",
     "backend_serve": "cd app/backend && php artisan serve --host=127.0.0.1 --port=8000",
@@ -341,11 +456,11 @@
     "production_build": "build-prod.bat  (builds frontend, copies SPA shell + assets, makes store-shift-deploy.zip)",
     "sync_webhooks": "php artisan shopify:sync-webhooks",
     "resume_stalled_migrations": "php artisan migration:watchdog [--stall=10]  (cron every 5 min in production)",
-    "seed_admin_and_plans": "php artisan db:seed --class=AdminSeeder --force"
+    "seed_admin_and_plans": "php artisan db:seed --class=AdminSeeder --force",
+    "prune_logs": "php artisan migration:prune [--days=90]  (cron daily; deletes activity logs of long-finished runs)"
   },
-
   "testing": {
-    "total_tests": 137,
+    "total_tests": 200,
     "command": "cd app/backend && php artisan test",
     "suites": {
       "MigrationEngineTest": "queue dispatch, dependency ordering, idempotency, custom tags",
@@ -363,19 +478,27 @@
       "PlanGatingTest": "preview carries the plan verdict per entity; spent allowance reads as exhausted; a fully-migrated store inside the cap does not; POST /api/migrations 422s a locked entity",
       "MailSettingsTest": "admin auth required; password never returned; blob encrypted at rest; blank password keeps the stored one; stored settings override .env; no-op when unconfigured",
       "MetafieldMapperTest": "key sanitisation, type detection",
-      "ShopifyErrorNormalisationTest": "string vs array error shapes"
+      "ShopifyErrorNormalisationTest": "string vs array error shapes",
+      "PlanPoolTest": "The shared record budget: it is spent across entities rather than repeated per entity; categories never draw on it; re-migrating records already counted is free; a plan with no `total` keeps the old per-entity behaviour; /preview reports limit/used/remaining; StartMigrationJob caps entities against it in dependency order and logs why; an emptied budget reads as exhausted; a contact_only plan 422s from Shopify billing",
+      "PlanSeedingTest": "Re-seeding keeps limits an admin changed, still creates a genuinely missing plan, and PLAN_SEED_OVERWRITE=true resets to code values",
+      "BatchRecoveryTest": "What happens to a CHUNK when things go wrong around it rather than inside one record: an unread batch is retryable and resumes at its offset; the retry endpoint is offered when only whole batches failed; a batch pins its source ids and then fetches by include=; a record deleted mid-run is recorded instead of shifting the page; a source that refuses the id listing still migrates by page; the watchdog revives EVERY stalled chunk but leaves queued ones alone and restarts a run whose dispatches were lost; planning gets more than the worker's default timeout; a chunk with no planned total is processed rather than silently skipped",
+      "ScaleHardeningTest": "The failure modes only a large, messy store produces: an over-long error message no longer kills a batch; a second concurrent migration is refused; a store that hides X-WP-Total is counted by probing; expired credentials are reported instead of read as an empty store; a permanently throttled batch is given up on; merchant data mentioning 'throttled' is not mistaken for throttling; an interrupted write adopts the object Shopify already has; a cancelled batch is handed back rather than left in flight; a broken cache backend cannot fail a batch"
     }
   },
-
   "secrets_location": {
     "note": "NEVER store secrets in this file or in git.",
     "backend_env": "app/backend/.env (local) and app/backend/.env.production (production template)",
     "frontend_env": "app/frontend/.env / .env.production — VITE_* values are PUBLIC (bundled)",
-    "contains": ["SHOPIFY_API_KEY", "SHOPIFY_API_SECRET", "APP_KEY", "DB_PASSWORD", "ADMIN_PASSWORD"],
+    "contains": [
+      "SHOPIFY_API_KEY",
+      "SHOPIFY_API_SECRET",
+      "APP_KEY",
+      "DB_PASSWORD",
+      "ADMIN_PASSWORD"
+    ],
     "gitignored": true,
     "smtp": "NOT in .env any more (though .env still works as the fallback). Set it at /app/admin/settings — stored encrypted in app_settings and applied at boot."
   },
-
   "key_files_to_read_first": [
     "CLAUDE.md — short guardrails",
     "SPECIFICATION.md — full architecture spec",

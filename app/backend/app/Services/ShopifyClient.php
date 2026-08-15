@@ -18,6 +18,35 @@ class ShopifyClient
      */
     private const SOFT_THROTTLE_BACKOFF = 60.0;
 
+    /**
+     * Keep this fraction of the shop's point budget in reserve. Hitting zero
+     * costs a full THROTTLED round trip plus a re-queued job; easing off as the
+     * bucket drains costs milliseconds. The reserve also leaves room for the
+     * other workers running in parallel on the same shop.
+     */
+    private const BUCKET_RESERVE = 0.25;
+
+    /** Never pause longer than this in a single call — the job has a time budget. */
+    private const MAX_PACE_SECONDS = 5.0;
+
+    /**
+     * productSet runs synchronously: Shopify downloads every image on the product
+     * before the mutation returns. A gallery of twenty photos pulled from a slow
+     * WordPress host does not fit in 30 seconds, and the cURL timeout was being
+     * recorded as a permanent item failure — for a product Shopify may well have
+     * created, which the next run then created again.
+     *
+     * Must stay under the jobs' $timeout (300s) with room for the retries below.
+     */
+    private const TIMEOUT_SECONDS = 90;
+
+    /**
+     * Shopify has 5xx days like everyone else, and a dropped connection is not a
+     * verdict on the merchant's data. Without this a transient blip permanently
+     * failed whichever product happened to be in flight.
+     */
+    private const TRANSIENT_TRIES = 3;
+
     private string $apiVersion;
 
     public function __construct(private readonly Shop $shop)
@@ -40,12 +69,24 @@ class ShopifyClient
         $res = Http::withHeaders([
             'X-Shopify-Access-Token' => $this->shop->access_token,
             'Content-Type' => 'application/json',
-        ])->timeout(30)->post($url, [
-            'query' => $query,
-            // Cast to object so an empty variables set encodes as {} not [];
-            // Shopify rejects a JSON array here with "Invalid variables parameter".
-            'variables' => (object) $variables,
-        ]);
+        ])
+            ->timeout(self::TIMEOUT_SECONDS)
+            // Retry only what a retry can fix: a dropped connection or a 5xx.
+            // 429 is deliberately excluded — it is handled below with Shopify's
+            // own Retry-After, which is a far better number than a fixed sleep.
+            ->retry(self::TRANSIENT_TRIES, 1000, function ($exception) {
+                $status = $exception instanceof \Illuminate\Http\Client\RequestException
+                    ? $exception->response->status()
+                    : 0;
+
+                return $status === 0 || $status >= 500;
+            }, throw: false)
+            ->post($url, [
+                'query' => $query,
+                // Cast to object so an empty variables set encodes as {} not [];
+                // Shopify rejects a JSON array here with "Invalid variables parameter".
+                'variables' => (object) $variables,
+            ]);
 
         if ($res->status() === 429) {
             $retryAfter = (float) ($res->header('Retry-After') ?: 2);
@@ -78,29 +119,101 @@ class ShopifyClient
 
         $res->throw();
 
+        // Learn this shop's real budget and ease off before we exhaust it.
+        $this->pace($body);
+
         return $body;
     }
 
     /**
+     * Adaptive pacing from the shop's own throttle status.
+     *
+     * Every response reports the bucket size, what is left in it, and how fast it
+     * refills — and those numbers differ 20x between a Standard store and an
+     * Enterprise one. Reacting to them instead of assuming a fixed rate means a
+     * Plus merchant runs at Plus speed automatically, while a Standard merchant
+     * is slowed just enough to never get throttled at all.
+     *
+     * Waiting here rather than being rejected is the cheaper trade: a THROTTLED
+     * error costs a wasted round trip and a re-queued job, this costs a sleep.
+     */
+    private function pace(array $body): void
+    {
+        $status = data_get($body, 'extensions.cost.throttleStatus');
+
+        if (! $status) {
+            return;
+        }
+
+        $available = (float) data_get($status, 'currentlyAvailable', 0);
+        $bucket = (float) data_get($status, 'maximumAvailable', 0);
+        $restoreRate = (float) data_get($status, 'restoreRate', 0);
+
+        if ($bucket <= 0 || $restoreRate <= 0) {
+            return;
+        }
+
+        // The migration engine reads these to decide how many workers to run.
+        app(ShopifyPlan::class)->remember($this->shop, $bucket, $restoreRate);
+
+        $floor = $bucket * self::BUCKET_RESERVE;
+
+        if ($available >= $floor) {
+            return;
+        }
+
+        $wait = min(($floor - $available) / $restoreRate, self::MAX_PACE_SECONDS);
+
+        usleep((int) round($wait * 1_000_000));
+    }
+
+    /**
      * A rate-limit message hidden in any mutation's userErrors.
-     * Deliberately a whole-body scan: the client does not know which mutation
-     * field it just called, and these messages are unmistakable.
+     *
+     * Scoped to userError MESSAGES rather than the whole response body. The scan
+     * used to run over everything under `data`, which meant a collection called
+     * "Throttled" — or any merchant string Shopify happened to echo back — put
+     * the batch to sleep for a minute and re-queued it, over and over, because
+     * nothing about that condition ever changes.
      */
     private static function looksRateLimited(array $body): bool
     {
-        if (empty($body['data'])) {
-            return false;
-        }
-
-        $text = mb_strtolower((string) json_encode($body['data']));
-
-        foreach (['too many attempts', 'exceeded rate limit', 'throttled'] as $needle) {
-            if (str_contains($text, $needle)) {
-                return true;
+        foreach (self::userErrorMessages($body) as $message) {
+            foreach (['too many attempts', 'exceeded rate limit', 'throttled', 'rate limit'] as $needle) {
+                if (str_contains($message, $needle)) {
+                    return true;
+                }
             }
         }
 
         return false;
+    }
+
+    /**
+     * Every userError message in the response, lower-cased.
+     *
+     * The client does not know which mutation field it just called, so it walks
+     * one level of `data` and collects the `userErrors` of whatever it finds.
+     *
+     * @return array<int, string>
+     */
+    private static function userErrorMessages(array $body): array
+    {
+        $messages = [];
+
+        foreach ((array) ($body['data'] ?? []) as $payload) {
+            if (! is_array($payload)) {
+                continue;
+            }
+
+            foreach ((array) ($payload['userErrors'] ?? []) as $error) {
+                if (is_array($error) && isset($error['message'])) {
+                    $messages[] = mb_strtolower((string) $error['message']);
+                }
+            }
+        }
+
+        return $messages;
     }
 
     /** Extract userErrors from a mutation payload, if any. */

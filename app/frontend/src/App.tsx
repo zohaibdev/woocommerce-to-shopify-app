@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Frame, Navigation, FooterHelp, Link, BlockStack, InlineStack, Text, Box } from "@shopify/polaris";
+import { Frame, Navigation, FooterHelp, Link, Text } from "@shopify/polaris";
 import {
   HomeIcon,
   OrderIcon,
@@ -126,31 +126,36 @@ function App() {
         <Route path="/pricing" element={<Pricing />} />
       </Routes>
 
+      {/*
+        Everything in here must be INLINE. Polaris wraps FooterHelp's children in
+        a <p>, and the BlockStack/InlineStack this used to contain are divs — so
+        every render logged "div cannot be a descendant of p", and the browser
+        silently reshapes invalid nesting into a DOM that no longer matches what
+        React thinks it rendered.
+      */}
       <FooterHelp>
-        <BlockStack gap="100" inlineAlign="center">
-          <InlineStack gap="200" blockAlign="center" align="center">
-            {/* Support is a page inside the app — sending merchants to a mailto:
-                (which the admin iframe blocks anyway) was never right. */}
-            <Link onClick={() => navigate("/support")}>Support</Link>
-            <Text as="span" tone="subdued">
-              ·
-            </Text>
-            <Link onClick={() => openPublicPage("/developers/")}>Documentation</Link>
-            <Text as="span" tone="subdued">
-              ·
-            </Text>
-            <Link onClick={() => openPublicPage("/contact/")}>Contact</Link>
-            <Text as="span" tone="subdued">
-              ·
-            </Text>
-            <Link onClick={() => navigate("/settings")}>Settings</Link>
-          </InlineStack>
-          <Box>
-            <Text as="span" variant="bodySm" tone="subdued">
-              Store Shift — WooCommerce → Shopify migration
-            </Text>
-          </Box>
-        </BlockStack>
+        <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+          {/* Support is a page inside the app — sending merchants to a mailto:
+              (which the admin iframe blocks anyway) was never right. */}
+          <Link onClick={() => navigate("/support")}>Support</Link>
+          <Text as="span" tone="subdued">
+            ·
+          </Text>
+          <Link onClick={() => openPublicPage("/developers/")}>Documentation</Link>
+          <Text as="span" tone="subdued">
+            ·
+          </Text>
+          <Link onClick={() => openPublicPage("/contact/")}>Contact</Link>
+          <Text as="span" tone="subdued">
+            ·
+          </Text>
+          <Link onClick={() => navigate("/settings")}>Settings</Link>
+        </span>
+        <span style={{ display: "block", marginTop: 4 }}>
+          <Text as="span" variant="bodySm" tone="subdued">
+            Store Shift — WooCommerce → Shopify migration
+          </Text>
+        </span>
       </FooterHelp>
     </Frame>
   );

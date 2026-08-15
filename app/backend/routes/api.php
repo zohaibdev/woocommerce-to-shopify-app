@@ -43,6 +43,8 @@ Route::middleware('shopify.session')->group(function () {
     Route::get('/shop', [ShopController::class, 'show']);
 
     Route::prefix('woocommerce')->group(function () {
+        // Read the stored connection without touching the merchant's store.
+        Route::get('/connection', [WooCommerceController::class, 'connection']);
         Route::post('/connect', [WooCommerceController::class, 'connect']);
         Route::post('/test', [WooCommerceController::class, 'test']);
         Route::get('/preview', [WooCommerceController::class, 'preview']);

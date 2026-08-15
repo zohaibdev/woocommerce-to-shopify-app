@@ -18,6 +18,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { api, type Shop } from "../api/client";
 import { loadSettings, saveSettings, type AppSettings } from "../settings";
+import { redirectTop } from "../navigation";
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -28,6 +29,11 @@ export default function Settings() {
   useEffect(() => {
     api.getShop().then(setShop).catch(() => undefined);
   }, []);
+
+  // Whether completion emails can be delivered at all. Until this was surfaced
+  // the toggle below promised a feature that was "coming soon" long after it had
+  // shipped, and gave no hint on an installation where it genuinely cannot work.
+  const emailDeliveryConfigured = shop?.email_delivery_configured !== false;
 
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) =>
     setSettings((s) => ({ ...s, [key]: value }));
@@ -83,7 +89,7 @@ export default function Settings() {
                     action={{
                       content: "Update app",
                       onAction: () => {
-                        if (shop) (window.top ?? window).location.href = shop.reauth_url;
+                        if (shop) redirectTop(shop.reauth_url);
                       },
                     }}
                   >
@@ -114,7 +120,7 @@ export default function Settings() {
                 <InlineStack>
                   <Button
                     onClick={() => {
-                      if (shop) (window.top ?? window).location.href = shop.reauth_url;
+                      if (shop) redirectTop(shop.reauth_url);
                     }}
                   >
                     Re-authorize app
@@ -160,6 +166,17 @@ export default function Settings() {
                   helpText="Prefills new migrations. WooCommerce doesn't expose its unit through the API."
                 />
                 <Select
+                  label="Image size"
+                  options={[
+                    { label: "Standard — up to 1024px (recommended)", value: "standard" },
+                    { label: "Large — up to 1536px", value: "large" },
+                    { label: "Original — full-size files", value: "full" },
+                  ]}
+                  value={settings.imageSize}
+                  onChange={(v) => update("imageSize", v)}
+                  helpText="Prefills new migrations. Shopify downloads every image before saving a product, so smaller images migrate considerably faster."
+                />
+                <Select
                   label="Status polling interval"
                   options={[
                     { label: "Every 2 seconds", value: "2" },
@@ -185,7 +202,12 @@ export default function Settings() {
                   label="Email me when a migration completes"
                   checked={settings.emailNotifications}
                   onChange={(v) => update("emailNotifications", v)}
-                  helpText="Email delivery is coming soon; your preference is saved now."
+                  helpText={
+                    emailDeliveryConfigured
+                      ? "Pre-ticks the notification box in the migration wizard, where you choose the address."
+                      : "This app has no email server configured yet, so completion emails cannot be sent."
+                  }
+                  disabled={!emailDeliveryConfigured}
                 />
               </BlockStack>
             </Card>

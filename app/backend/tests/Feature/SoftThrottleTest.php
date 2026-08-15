@@ -139,9 +139,16 @@ class SoftThrottleTest extends TestCase
         $this->assertSame(1, MigrationItem::where('migration_id', $migration->id)->where('status', 'success')->count());
         $this->assertSame(0, MigrationItem::where('migration_id', $migration->id)->where('status', 'failed')->count());
 
-        // The batch waits and resumes rather than ending.
-        $this->assertSame('pending', $batch->fresh()->status);
-        Queue::assertPushed(ProcessBatchJob::class, fn ($job) => $job->batchId === $batch->id);
+        // The batch waits and resumes rather than ending — and it keeps HOLDING
+        // the chunk while it waits, handing it to the continuation by lease. Left
+        // "pending" the chunk read as free, and a concurrent advance() dispatched
+        // a second job for the very same records.
+        $this->assertSame('processing', $batch->fresh()->status);
+
+        Queue::assertPushed(
+            ProcessBatchJob::class,
+            fn ($job) => $job->batchId === $batch->id && $job->lease === (int) $batch->fresh()->attempts,
+        );
     }
 
     public function test_a_throttled_retry_run_also_waits_instead_of_failing(): void

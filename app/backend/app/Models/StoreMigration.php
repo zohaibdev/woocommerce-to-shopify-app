@@ -57,6 +57,18 @@ class StoreMigration extends Model
 
     public function isCancelledOrPaused(): bool
     {
-        return in_array($this->fresh()->status, ['cancelled', 'paused'], true);
+        return in_array($this->currentStatus(), ['cancelled', 'paused'], true);
+    }
+
+    /**
+     * The run's status straight from the database, without rehydrating the model.
+     *
+     * `fresh()` was being called once per migrated item — a full row SELECT, plus
+     * a new model, fifty thousand times over a large catalogue — purely to read
+     * one enum column.
+     */
+    public function currentStatus(): string
+    {
+        return (string) static::query()->whereKey($this->getKey())->value('status');
     }
 }

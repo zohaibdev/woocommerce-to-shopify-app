@@ -23,6 +23,13 @@ class CustomerMigrator extends AbstractMigrator
     }
     GQL;
 
+    /** Recovery lookup after an interrupted write (see findExisting). */
+    private const FIND_BY_EMAIL = <<<'GQL'
+    query findCustomer($q: String!) {
+      customers(first: 1, query: $q) { nodes { id } }
+    }
+    GQL;
+
     // customer tags are applied from the migration's custom_tags option.
 
     public function entityType(): string
@@ -44,6 +51,27 @@ class CustomerMigrator extends AbstractMigrator
     public function fetchBatch(WoocommerceConnection $connection, int $page, int $perPage): array
     {
         return (new WooCommerceClient($connection))->list('customers', $page, $perPage);
+    }
+
+    /**
+     * Did an interrupted attempt already create this customer? Email is the key
+     * Shopify itself treats as unique, so this is exact. Asked only when the
+     * mapping shows a write we never got the answer to — see
+     * AbstractMigrator::migrateItem.
+     */
+    protected function findExisting(StoreMigration $migration, array $wooItem): ?string
+    {
+        $email = trim((string) ($wooItem['email'] ?? data_get($wooItem, 'billing.email', '')));
+
+        if ($email === '') {
+            return null;
+        }
+
+        $body = $this->shopify($migration)->graphql(self::FIND_BY_EMAIL, [
+            'q' => 'email:"'.str_replace(['\\', '"'], ['\\\\', '\\"'], $email).'"',
+        ]);
+
+        return data_get($body, 'data.customers.nodes.0.id');
     }
 
     protected function doMigrate(StoreMigration $migration, array $wooItem, ?string $existingShopifyId = null): MigrationItemResult

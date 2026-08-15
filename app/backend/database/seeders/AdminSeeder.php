@@ -19,7 +19,10 @@ class AdminSeeder extends Seeder
             ],
         );
 
-        // `null` in a limit means unlimited. Orders/metafields are gated per plan.
+        // `null` in a limit means unlimited, `0` means the entity is not included
+        // at all, and `total` is a SHARED record budget spent across products,
+        // customers and orders together (see App\Support\PlanPool) rather than a
+        // separate cap for each.
         $plans = [
             [
                 'code' => 'starter',
@@ -48,9 +51,12 @@ class AdminSeeder extends Seeder
                 'name' => 'Pro',
                 'price' => 49,
                 'limits' => [
-                    'products' => 20000,
-                    'customers' => 20000,
-                    'orders' => 20000,
+                    // ONE budget of 20,000 records, spent however the merchant
+                    // likes across the three metered types — not 20,000 of each.
+                    // Three separate caps made the headline number meaningless:
+                    // a store with 20,000 products and a store with 60,000
+                    // records across all three bought the same plan.
+                    'total' => 20000,
                     'metafields' => true,
                 ],
             ],
@@ -63,17 +69,42 @@ class AdminSeeder extends Seeder
                     'customers' => null,
                     'orders' => null,
                     'metafields' => true,
+                    // Negotiated and invoiced off-platform, so the app must not
+                    // offer a Shopify charge screen for it — the checkout could
+                    // not deliver what the plan actually is.
+                    'contact_only' => true,
                 ],
             ],
         ];
 
-        // updateOrCreate (not firstOrCreate): plan definitions are configuration,
-        // so re-seeding must bring existing rows in line with the code.
+        // These are STARTING values for a plan that does not exist yet, not the
+        // source of truth for one that does.
+        //
+        // This used to be updateOrCreate, and the deploy runbook runs the seeder
+        // on every release — so every price and every limit an admin had set at
+        // /app/admin/plans was silently reset to whatever was hard-coded here, on
+        // a deploy that had nothing to do with pricing. Merchants on a raised cap
+        // quietly lost it, and nothing in the app said so. The plans table is
+        // meant to be editable without a deploy; now it actually is.
+        //
+        // Set PLAN_SEED_OVERWRITE=true for the one case where resetting really is
+        // what you want: pushing a deliberate pricing change out from the code.
+        $overwrite = filter_var(env('PLAN_SEED_OVERWRITE', false), FILTER_VALIDATE_BOOLEAN);
+
         foreach ($plans as $p) {
-            Plan::updateOrCreate(
-                ['code' => $p['code']],
-                $p + ['interval' => 'monthly', 'active' => true],
-            );
+            $attributes = $p + ['interval' => 'monthly', 'active' => true];
+
+            $existing = Plan::where('code', $p['code'])->first();
+
+            if (! $existing) {
+                Plan::create($attributes);
+
+                continue;
+            }
+
+            if ($overwrite) {
+                $existing->update($attributes);
+            }
         }
 
         // Retire the old free plan code if it's still around.

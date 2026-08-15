@@ -18,6 +18,20 @@ interface Migrator
     public function fetchBatch(WoocommerceConnection $connection, int $page, int $perPage): array;
 
     /**
+     * The source ids on one page — no record bodies.
+     *
+     * Lets a batch resolve itself to a fixed set of ids once, and fetch by id
+     * from then on: `include=` costs the same at page 500 as at page 1, and a
+     * record deleted mid-run can no longer shift the page underneath a resume.
+     *
+     * Returns null when this migrator cannot answer, which puts the caller back
+     * on ordinary page/offset paging.
+     *
+     * @return array<int, int>|null
+     */
+    public function listSourceIds(WoocommerceConnection $connection, int $page, int $perPage): ?array;
+
+    /**
      * Fetch specific source items by WooCommerce id. Used by "retry failed items"
      * so a retry costs one request for the handful that failed, instead of a full
      * re-run of the whole entity.

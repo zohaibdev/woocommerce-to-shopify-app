@@ -6,6 +6,7 @@ use App\Mail\MigrationCompleted;
 use App\Migration\MigrationRunner;
 use App\Models\MigrationBatch;
 use App\Models\StoreMigration;
+use App\Services\MailSettings;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -23,6 +24,14 @@ use Throwable;
 class FinalizeMigrationJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    /**
+     * Above the worker's 60s default because the last thing this does is hand a
+     * message to an SMTP server the merchant configured, which can sit there. The
+     * status is written BEFORE the email goes out, so a kill during delivery costs
+     * the notification and never the finished run.
+     */
+    public int $timeout = 180;
 
     public function __construct(public int $migrationId) {}
 
@@ -91,7 +100,19 @@ class FinalizeMigrationJob implements ShouldQueue
         try {
             Mail::to($email)->send(new MigrationCompleted($migration));
 
-            MigrationRunner::log($migration->id, 'info', null, "Completion email sent to {$email}.");
+            // Handing the message to a mailer that goes nowhere is not the same
+            // as delivering it. Reporting "sent" either way left merchants
+            // waiting on an email that was never going to arrive, with the
+            // activity log agreeing with them that it had been sent.
+            MailSettings::canDeliver()
+                ? MigrationRunner::log($migration->id, 'info', null, "Completion email sent to {$email}.")
+                : MigrationRunner::log(
+                    $migration->id,
+                    'warning',
+                    null,
+                    "The completion email for {$email} could not be delivered — this app has no email "
+                        .'server configured. Your migration itself finished normally.',
+                );
         } catch (Throwable $e) {
             MigrationRunner::log(
                 $migration->id,

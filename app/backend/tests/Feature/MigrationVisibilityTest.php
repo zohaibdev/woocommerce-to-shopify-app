@@ -119,7 +119,11 @@ class MigrationVisibilityTest extends TestCase
 
         // The batch never completed — it was re-queued for the throttle window —
         // yet the first item's progress is already visible to the merchant.
-        $this->assertSame('pending', $batch->fresh()->status);
+        //
+        // It stays "processing" while it waits, deliberately. Releasing it to
+        // "pending" made the chunk look free to inFlight(), so a concurrent
+        // advance() handed the same chunk straight back out to a second job.
+        $this->assertSame('processing', $batch->fresh()->status);
         $this->assertSame(1, $entity->successful_items);
         $this->assertSame(1, $entity->processed_items);
     }

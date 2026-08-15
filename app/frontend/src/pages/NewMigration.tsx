@@ -17,7 +17,7 @@ import {
   Checkbox,
 } from "@shopify/polaris";
 import { useNavigate } from "react-router-dom";
-import { api, type EntityCount } from "../api/client";
+import { api, type EntityCount, type PlanPool } from "../api/client";
 import { loadSettings } from "../settings";
 
 // Variants, options and images are migrated INLINE with each product, so they
@@ -41,6 +41,24 @@ const WEIGHT_UNITS = [
   { label: "Ounces (oz)", value: "OUNCES" },
 ];
 
+/**
+ * Shopify downloads every image itself and the product write waits for it, so
+ * image size is the biggest single lever a merchant has over how long a run
+ * takes. WordPress has already generated the smaller copies, so "standard" costs
+ * nothing but the pixels a storefront never displays anyway.
+ */
+const IMAGE_SIZES = [
+  { label: "Standard — up to 1024px (recommended)", value: "standard" },
+  { label: "Large — up to 1536px", value: "large" },
+  { label: "Original — full-size files", value: "full" },
+];
+
+const IMAGE_SIZE_HELP: Record<string, string> = {
+  standard: "Uses the resized copies WordPress already made. Fastest, and large enough for most storefronts.",
+  large: "Higher quality than standard. Migration will take somewhat longer.",
+  full: "Highest quality, and the slowest option by a wide margin.",
+};
+
 const PREFERRED_DEFAULTS = ["product", "category"];
 
 /** Nothing to migrate, or the plan won't allow it. */
@@ -62,10 +80,14 @@ export default function NewMigration() {
   const [customTags, setCustomTags] = useState(prefs.defaultTags);
   const [defaultVendor, setDefaultVendor] = useState(prefs.defaultVendor);
   const [weightUnit, setWeightUnit] = useState(prefs.weightUnit);
+  const [imageSize, setImageSize] = useState(prefs.imageSize);
   const [counts, setCounts] = useState<EntityCount[]>([]);
   const [planName, setPlanName] = useState<string | null>(null);
+  const [pool, setPool] = useState<PlanPool | null>(null);
   const [notifyMe, setNotifyMe] = useState(prefs.emailNotifications);
   const [notifyEmail, setNotifyEmail] = useState("");
+  const [emailDeliveryConfigured, setEmailDeliveryConfigured] = useState(true);
+  const [sourceError, setSourceError] = useState<string | null>(null);
   const [loadingCounts, setLoadingCounts] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -73,10 +95,25 @@ export default function NewMigration() {
   useEffect(() => {
     api
       .preview()
-      .then(({ counts, plan, shop_email }) => {
+      .then(({ counts, plan, pool, shop_email, email_delivery_configured, active_migration_id, source_error }) => {
+        // One run at a time — the API refuses a second with a 409, so there is
+        // nothing to be gained by letting the merchant fill the form in first.
+        if (active_migration_id) {
+          navigate(`/migrations/${active_migration_id}`, { replace: true });
+
+          return;
+        }
+
         setCounts(counts);
+        setSourceError(source_error ?? null);
         setPlanName(plan?.name ?? null);
+        setPool(pool ?? null);
+        setEmailDeliveryConfigured(email_delivery_configured !== false);
         if (shop_email) setNotifyEmail(shop_email);
+
+        // Ticking "email me" on an installation with no mail server produces a
+        // merchant waiting for something that was never going to be sent.
+        if (email_delivery_configured === false) setNotifyMe(false);
 
         // Only pre-tick what the merchant can actually run — a checkbox that is
         // on by default but rejected on submit is worse than one that is off.
@@ -86,9 +123,11 @@ export default function NewMigration() {
           ),
         );
       })
-      .catch(() => undefined)
+      // The wizard is unusable without counts; saying so beats an empty form
+      // whose checkboxes are all mysteriously disabled.
+      .catch((e) => setError((e as Error).message))
       .finally(() => setLoadingCounts(false));
-  }, []);
+  }, [navigate]);
 
   const gate = (type: string) => counts.find((c) => c.type === type);
 
@@ -106,9 +145,12 @@ export default function NewMigration() {
   const estimated = selected.reduce((sum, t) => sum + migratableFor(t), 0);
 
   const blockedByPlan = ENTITY_OPTIONS.filter((o) => isBlockedByPlan(gate(o.value)));
+
+  // "Capped" is anything the plan will not migrate in full, whether that is this
+  // entity's own limit or the shared budget being spent by another entity first.
   const cappedByPlan = ENTITY_OPTIONS.filter((o) => {
     const entity = gate(o.value);
-    return isSelectable(entity) && entity!.limit !== null && entity!.count > entity!.limit;
+    return isSelectable(entity) && entity!.migratable < entity!.count;
   });
 
   const helpTextFor = (option: (typeof ENTITY_OPTIONS)[number]) => {
@@ -120,19 +162,42 @@ export default function NewMigration() {
     if (entity.locked) {
       return `Not included in your ${planName ?? "current"} plan — upgrade to migrate ${available}`;
     }
-    if (entity.exhausted) {
-      return `Plan limit reached — you've migrated all ${entity.limit?.toLocaleString()} your plan allows, and ${available} exist in WooCommerce`;
-    }
     if (entity.count === 0) {
       return `None found in WooCommerce — ${option.detail}`;
     }
-    if (entity.limit !== null && entity.count > entity.limit) {
+    // A pooled entity's number is decided by the shared budget and by what the
+    // other entities took first, which this row cannot explain on its own — so
+    // use the sentence the server built with the whole picture in view.
+    if (entity.pooled && entity.reason) {
+      return entity.reason;
+    }
+    if (entity.exhausted) {
+      return `Plan limit reached — you've migrated all ${entity.limit?.toLocaleString()} your plan allows, and ${available} exist in WooCommerce`;
+    }
+    if (entity.migratable < entity.count) {
       return `${entity.migratable.toLocaleString()} of ${available} will migrate on your ${planName ?? "current"} plan — upgrade for the rest`;
     }
     return `${available} available — ${option.detail}`;
   };
 
+  /**
+   * "Email me when it's done" is worth nothing without a valid address, and the
+   * backend cannot tell an empty field from a merchant who did not want one — so
+   * a blank box used to submit happily and simply never send anything.
+   */
+  const notifyEmailError =
+    notifyMe && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(notifyEmail.trim())
+      ? "Enter the email address the completion notice should go to."
+      : undefined;
+
   const start = async () => {
+    if (notifyEmailError) {
+      setStep(1);
+      setError(notifyEmailError);
+
+      return;
+    }
+
     setStarting(true);
     setError(null);
     try {
@@ -143,6 +208,7 @@ export default function NewMigration() {
         defaultVendor: defaultVendor.trim(),
         name: name.trim(),
         weightUnit,
+        imageSize,
         notifyEmail: notifyMe ? notifyEmail.trim() : "",
       });
       navigate(`/migrations/${migration.id}`);
@@ -161,7 +227,57 @@ export default function NewMigration() {
           </Banner>
         )}
 
-        {!loadingCounts && blockedByPlan.length > 0 && (
+        {/*
+          Every entity showing zero is indistinguishable from an empty store
+          until you say why. Expired WooCommerce API keys answer 401 to
+          everything, and that is what this is nearly always reporting.
+        */}
+        {!loadingCounts && sourceError && (
+          <Banner
+            tone="critical"
+            title="Your WooCommerce store could not be read"
+            action={{ content: "Check connection", onAction: () => navigate("/woocommerce") }}
+          >
+            <Text as="p">{sourceError}</Text>
+          </Banner>
+        )}
+
+        {/*
+          A shared budget cannot be understood from any single entity's row: the
+          merchant needs to see the one number and what they have left of it,
+          otherwise "200 of 800 products" looks like an arbitrary cap rather than
+          the consequence of what customers took first.
+        */}
+        {!loadingCounts && !sourceError && pool && (
+          <Banner
+            tone={pool.remaining === 0 ? "warning" : "info"}
+            title={
+              pool.remaining === 0
+                ? `You've used your whole ${planName ?? "current"} plan allowance`
+                : `${pool.remaining.toLocaleString()} of ${pool.limit.toLocaleString()} records left on your ${planName ?? "current"} plan`
+            }
+            action={{ content: "View plans", onAction: () => navigate("/pricing") }}
+            secondaryAction={{
+              content: "Contact support",
+              onAction: () => navigate("/support"),
+            }}
+          >
+            <BlockStack gap="100">
+              <Text as="p">
+                Your plan covers {pool.limit.toLocaleString()} records in total across products,
+                customers and orders — not {pool.limit.toLocaleString()} of each. You've migrated{" "}
+                {pool.used.toLocaleString()} so far. Re-migrating something you have already
+                migrated does not use any more of it.
+              </Text>
+              <Text as="p" tone="subdued" variant="bodySm">
+                Need more than {pool.limit.toLocaleString()}? Talk to support about an Enterprise
+                plan — it is arranged directly with us rather than through Shopify billing.
+              </Text>
+            </BlockStack>
+          </Banner>
+        )}
+
+        {!loadingCounts && !sourceError && blockedByPlan.length > 0 && (
           <Banner
             tone="warning"
             title={`Your ${planName ?? "current"} plan doesn't cover everything in this store`}
@@ -253,6 +369,25 @@ export default function NewMigration() {
                 onChange={setWeightUnit}
                 helpText="WooCommerce doesn't report its unit, so pick the one your store uses — product weights are imported with it."
               />
+              <BlockStack gap="200">
+                <Select
+                  label="Image size"
+                  options={IMAGE_SIZES}
+                  value={imageSize}
+                  onChange={setImageSize}
+                  helpText={IMAGE_SIZE_HELP[imageSize]}
+                />
+                {imageSize === "full" && (
+                  <Banner tone="warning">
+                    <Text as="p" variant="bodySm">
+                      Shopify downloads every image from your store before a product is saved, so
+                      full-size files can make this migration several times slower — and much slower
+                      still if your images are large camera originals. Choose Standard unless you
+                      specifically need the original files.
+                    </Text>
+                  </Banner>
+                )}
+              </BlockStack>
               <TextField
                 label="Custom tags (optional)"
                 value={customTags}
@@ -275,9 +410,23 @@ export default function NewMigration() {
                   label="Email me when this migration finishes"
                   checked={notifyMe}
                   onChange={setNotifyMe}
-                  helpText="Large migrations can take hours — you don't have to keep this page open."
+                  disabled={!emailDeliveryConfigured}
+                  helpText={
+                    emailDeliveryConfigured
+                      ? "Large migrations can take hours — you don't have to keep this page open."
+                      : "Email notifications are not available on this installation."
+                  }
                 />
-                {notifyMe && (
+                {!emailDeliveryConfigured && (
+                  <Banner tone="info">
+                    <Text as="p" variant="bodySm">
+                      This app has no email server configured, so no completion notice can be sent.
+                      Your migration will run normally — the progress page keeps updating on its own,
+                      and closing it does not stop the run.
+                    </Text>
+                  </Banner>
+                )}
+                {notifyMe && emailDeliveryConfigured && (
                   <TextField
                     label="Send to"
                     type="email"
@@ -285,13 +434,14 @@ export default function NewMigration() {
                     onChange={setNotifyEmail}
                     placeholder="you@example.com"
                     autoComplete="email"
+                    error={notifyEmail.trim() !== "" ? notifyEmailError : undefined}
                   />
                 )}
               </BlockStack>
               <InlineStack align="end">
                 <Button
                   variant="primary"
-                  disabled={selected.length === 0 || loadingCounts}
+                  disabled={selected.length === 0 || loadingCounts || !!notifyEmailError}
                   onClick={() => setStep(2)}
                 >
                   Continue

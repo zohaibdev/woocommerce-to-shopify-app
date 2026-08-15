@@ -44,33 +44,100 @@ async function authHeader(): Promise<Record<string, string>> {
   return shop ? { "X-Shop-Domain": shop } : {};
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      ...(await authHeader()),
-      ...(options.headers ?? {}),
-    },
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`API ${res.status}: ${body}`);
+/** An API error that still knows its HTTP status, so callers can branch on it. */
+export class ApiError extends Error {
+  // Declared and assigned rather than a constructor parameter property, which
+  // this project's `erasableSyntaxOnly` setting does not allow.
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
   }
-  return res.json() as Promise<T>;
+}
+
+/**
+ * Pull the human sentence out of a Laravel error response.
+ *
+ * Banners used to print the raw body, so a merchant who started a second
+ * migration was shown `API 409: {"message":"Migration #12 is still running…"}`
+ * — the answer was in there, wrapped in something that reads as a crash.
+ */
+function errorMessage(status: number, body: string): string {
+  try {
+    const parsed = JSON.parse(body);
+    const message =
+      parsed?.message ||
+      // Laravel validation: {"errors": {"field": ["reason"]}}
+      (parsed?.errors && Object.values(parsed.errors as Record<string, string[]>)[0]?.[0]);
+
+    if (typeof message === "string" && message.trim()) return message;
+  } catch {
+    /* not JSON — fall through */
+  }
+
+  if (status === 401 || status === 403) {
+    return "Your session expired. Reload the page to continue.";
+  }
+  if (status >= 500) {
+    return "The server had a problem handling that. Please try again in a moment.";
+  }
+
+  return `Request failed (${status}).`;
+}
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  let res: Response;
+
+  try {
+    res = await fetch(`${BASE_URL}${path}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...(await authHeader()),
+        ...(options.headers ?? {}),
+      },
+    });
+  } catch {
+    // Offline, DNS failure, the tunnel dropped. A polling page hits this
+    // constantly on a flaky connection and it must not read as a bug.
+    throw new ApiError(0, "Could not reach the server. Check your connection and try again.");
+  }
+
+  if (!res.ok) {
+    throw new ApiError(res.status, errorMessage(res.status, await res.text()));
+  }
+
+  // 204, or a proxy that returns an empty body on success.
+  const text = await res.text();
+
+  if (!text) return undefined as T;
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    // Almost always a session-expiry HTML login page served with a 200.
+    throw new ApiError(res.status, "The server returned an unexpected response. Reload the page.");
+  }
 }
 
 // ---- Types ----
 export interface Shop {
   shopify_domain: string;
   name: string | null;
+  email: string | null;
   woocommerce_connected: boolean;
   granted_scopes: string[];
   required_scopes: string[];
   missing_scopes: string[];
   needs_scope_update: boolean;
   reauth_url: string;
+  /** The run in flight, if any. A shop may only have one at a time. */
+  active_migration_id: number | null;
+  /** False when the app has no mail server, so "email me" cannot deliver. */
+  email_delivery_configured: boolean;
 }
 
 export interface WooConnection {
@@ -97,7 +164,26 @@ export interface EntityCount {
   locked: boolean;
   /** The cap is spent and there is still source data it can never reach. */
   exhausted: boolean;
+  /**
+   * This entity draws on the plan's SHARED record budget rather than a cap of
+   * its own — so its number can be cut short by what another entity took first,
+   * which is not something the merchant can work out from this row alone.
+   */
+  pooled: boolean;
   reason: string | null;
+}
+
+/**
+ * One record budget spent across products, customers and orders together, rather
+ * than a separate cap for each. Null on plans that meter per entity.
+ */
+export interface PlanPool {
+  limit: number;
+  /** Distinct records this shop has already migrated. Re-running is free. */
+  used: number;
+  remaining: number;
+  /** Entity types that draw on it — categories deliberately do not. */
+  entities: string[];
 }
 
 export interface EntityProgress {
@@ -107,6 +193,19 @@ export interface EntityProgress {
   successful: number;
   failed: number;
   percentage: number;
+}
+
+/**
+ * How the merchant's own WooCommerce store is holding up. Present only while a
+ * migration is running — a slow source is the most common reason a run crawls,
+ * and it is not something the merchant can otherwise see.
+ */
+export interface SourceHealth {
+  status: "healthy" | "slow" | "very_slow" | "failing";
+  average_seconds: number;
+  requests: number;
+  failures: number;
+  message: string;
 }
 
 export interface Migration {
@@ -125,6 +224,13 @@ export interface Migration {
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
+  source_health: SourceHealth | null;
+  /**
+   * Chunks whose records were never read from WooCommerce at all. They produce
+   * no failed ITEMS, so this is the only signal that part of the catalogue is
+   * missing — and the only reason to offer a retry when the item list is empty.
+   */
+  failed_batches: number;
 }
 
 export interface ContentItem {
@@ -153,6 +259,13 @@ export interface PlanLimits {
   customers?: number | null;
   orders?: number | null;
   metafields?: boolean;
+  /**
+   * One record budget shared across products, customers and orders, instead of
+   * a cap per entity. When present it is what actually meters the plan.
+   */
+  total?: number | null;
+  /** Arranged with us directly, not buyable through Shopify billing. */
+  contact_only?: boolean;
 }
 
 export interface BillingPlan {
@@ -176,6 +289,15 @@ export interface PageMeta {
   per_page: number;
   total: number;
   has_more: boolean;
+}
+
+/**
+ * The migration list also reports the shop's in-flight run, so the page can hide
+ * "New migration" without having to guess from whichever page of results it
+ * happens to be showing.
+ */
+export interface MigrationListMeta extends PageMeta {
+  active_migration_id: number | null;
 }
 
 export interface MigrationLogEntry {
@@ -204,15 +326,24 @@ export const api = {
 
   testWoo: () => request<WooConnection>("/woocommerce/test", { method: "POST" }),
 
+  /** The stored connection, without touching the merchant's store. Null if none. */
+  getWooConnection: () => request<WooConnection | null>("/woocommerce/connection"),
+
   preview: () =>
     request<{
       counts: EntityCount[];
       plan: { code: string; name: string } | null;
+      /** Shared record budget, or null when the plan meters each entity. */
+      pool: PlanPool | null;
       shop_email: string | null;
+      email_delivery_configured: boolean;
+      active_migration_id: number | null;
+      /** Set when the counts could not be read — expired API keys, store down. */
+      source_error: string | null;
     }>("/woocommerce/preview"),
 
   listMigrations: (page = 1, perPage = 10) =>
-    request<{ data: Migration[]; meta: PageMeta }>(
+    request<{ data: Migration[]; meta: MigrationListMeta }>(
       `/migrations?page=${page}&per_page=${perPage}`,
     ),
 
@@ -222,6 +353,8 @@ export const api = {
     defaultVendor?: string;
     name?: string;
     weightUnit?: string;
+    /** standard (1024px) | large (1536px) | full (original files). */
+    imageSize?: string;
     /** Blank = no email when the migration finishes. */
     notifyEmail?: string;
   }) =>
@@ -233,6 +366,7 @@ export const api = {
         default_vendor: opts.defaultVendor ?? "",
         name: opts.name ?? "",
         weight_unit: opts.weightUnit ?? "KILOGRAMS",
+        image_size: opts.imageSize ?? "standard",
         notify_email: opts.notifyEmail ?? "",
       }),
     }),
@@ -289,9 +423,14 @@ export const api = {
 
   getMigration: (id: number) => request<Migration>(`/migrations/${id}`),
 
-  getItems: (id: number, params: { entity?: string; status?: string } = {}) => {
-    const q = new URLSearchParams(params as Record<string, string>).toString();
-    return request<{ data: MigrationItem[] }>(`/migrations/${id}/items?${q}`);
+  getItems: (
+    id: number,
+    params: { entity?: string; status?: string; page?: number; per_page?: number } = {},
+  ) => {
+    const q = new URLSearchParams(
+      Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])),
+    ).toString();
+    return request<{ data: MigrationItem[]; meta: PageMeta }>(`/migrations/${id}/items?${q}`);
   },
 
   replyToTicket: (id: number, message: string) =>

@@ -47,6 +47,17 @@ class BillingController extends Controller
         $shop = CurrentShop::resolve($request);
         $plan = Plan::where('code', $data['plan'])->where('active', true)->firstOrFail();
 
+        // Enterprise is negotiated and invoiced off-platform. Sending the merchant
+        // to a Shopify charge screen for it would bill them for a subscription
+        // that is not what they think they are buying.
+        if ($plan->isContactOnly()) {
+            return response()->json([
+                'error' => "The {$plan->name} plan is arranged with our team rather than through Shopify billing. "
+                    .'Contact support and we will set it up for you.',
+                'contact_only' => true,
+            ], 422);
+        }
+
         try {
             $confirmationUrl = $billing->subscribe($shop, $plan);
         } catch (\Throwable $e) {

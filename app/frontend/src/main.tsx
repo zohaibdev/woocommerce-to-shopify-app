@@ -6,6 +6,7 @@ import type { LinkLikeComponentProps } from "@shopify/polaris/build/ts/src/utili
 import enTranslations from "@shopify/polaris/locales/en.json";
 import "@shopify/polaris/build/esm/styles.css";
 import App from "./App";
+import ErrorBoundary from "./ErrorBoundary";
 
 // Vite sets BASE_URL from vite.config `base` ("/app/" in production, "/" in dev).
 // React Router needs it without the trailing slash so /app/admin resolves.
@@ -44,8 +45,12 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     {/* Router must wrap AppProvider so linkComponent can use RouterLink. */}
     <BrowserRouter basename={basename}>
+      {/* Inside AppProvider so the fallback can use Polaris, and inside the
+          Router so its "Reload" affordance keeps the basename. */}
       <AppProvider i18n={enTranslations} linkComponent={AppLink}>
-        <App />
+        <ErrorBoundary>
+          <App />
+        </ErrorBoundary>
       </AppProvider>
     </BrowserRouter>
   </StrictMode>

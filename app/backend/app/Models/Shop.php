@@ -12,6 +12,7 @@ class Shop extends Model
         'shopify_domain', 'access_token', 'refresh_token', 'token_expires_at',
         'refresh_token_expires_at', 'scopes', 'name', 'email',
         'plan_id', 'installed_at', 'uninstalled_at',
+        'shopify_plan', 'api_bucket_size', 'api_restore_rate', 'limits_checked_at',
     ];
 
     protected $casts = [
@@ -21,6 +22,7 @@ class Shop extends Model
         'refresh_token_expires_at' => 'datetime',
         'installed_at' => 'datetime',
         'uninstalled_at' => 'datetime',
+        'limits_checked_at' => 'datetime',
     ];
 
     protected $hidden = ['access_token', 'refresh_token'];
@@ -102,6 +104,30 @@ class Shop extends Model
 
         // Missing key => unmetered; explicit null => unlimited.
         return array_key_exists($key, $limits) ? $limits[$key] : null;
+    }
+
+    /**
+     * The plan's SHARED record allowance, spent across products, customers and
+     * orders together — or null when this plan meters each entity separately.
+     *
+     * See App\Support\PlanPool. Lives in the same `limits` blob the admin panel
+     * already edits, so switching a plan between pooled and per-entity metering
+     * needs no deploy.
+     */
+    public function poolLimit(): ?int
+    {
+        return $this->currentPlan()?->poolLimit();
+    }
+
+    /**
+     * Whether this plan is bought by talking to us rather than through Shopify
+     * billing. Enterprise is negotiated and invoiced off-platform, so offering an
+     * "Upgrade" button that opens a Shopify charge screen for it would promise
+     * something the checkout cannot deliver.
+     */
+    public function planIsContactOnly(): bool
+    {
+        return (bool) $this->currentPlan()?->isContactOnly();
     }
 
     /** Whether the plan allows a feature flag such as "metafields". */

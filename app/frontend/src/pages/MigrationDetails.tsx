@@ -18,11 +18,27 @@ import { api, type Migration, type MigrationItem, type MigrationLogEntry } from 
 
 const ACTIVE_STATES = ["pending", "processing", "paused"];
 
+/**
+ * A finished-with-errors or failed run used to be badged "info" — the same blue
+ * as one that is merely queued — so the one screen that exists to report the
+ * outcome gave no visual signal of what the outcome was.
+ */
+const STATUS_TONE: Record<string, "success" | "critical" | "attention" | "info"> = {
+  completed: "success",
+  completed_with_errors: "attention",
+  paused: "attention",
+  failed: "critical",
+  cancelled: "critical",
+  processing: "info",
+  pending: "info",
+};
+
 export default function MigrationDetails() {
   const { id } = useParams();
   const migrationId = Number(id);
   const [migration, setMigration] = useState<Migration | null>(null);
   const [failedItems, setFailedItems] = useState<MigrationItem[]>([]);
+  const [failedTotal, setFailedTotal] = useState(0);
   const [logs, setLogs] = useState<MigrationLogEntry[]>([]);
   const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,11 +52,33 @@ export default function MigrationDetails() {
       ]);
       setMigration(m);
       setLogs(logEntries);
+      // A poll that succeeds clears a message left by one that did not; a page
+      // that is working again should not still be shouting about a blip.
+      setError(null);
+
       if (!ACTIVE_STATES.includes(m.status)) {
-        if (timer.current) window.clearInterval(timer.current);
+        if (timer.current) {
+          window.clearInterval(timer.current);
+          timer.current = null;
+        }
+
         if (m.status === "completed_with_errors" || m.status === "failed") {
-          const { data } = await api.getItems(migrationId, { status: "failed" });
-          setFailedItems(data);
+          // 200 is the API's page limit. A big run can fail more than that, so
+          // the true total is shown alongside and the complete list lives in the
+          // log download, which streams and has no cap.
+          //
+          // Failing to fetch the list must not cost the merchant the whole page,
+          // which is the part that tells them the run finished at all.
+          try {
+            const { data, meta } = await api.getItems(migrationId, {
+              status: "failed",
+              per_page: 200,
+            });
+            setFailedItems(data);
+            setFailedTotal(meta?.total ?? data.length);
+          } catch {
+            /* the summary above still stands */
+          }
         }
       }
     } catch (e) {
@@ -58,7 +96,11 @@ export default function MigrationDetails() {
   }, [load]);
 
   const cancel = async () => {
-    await api.cancelMigration(migrationId);
+    try {
+      await api.cancelMigration(migrationId);
+    } catch (e) {
+      setError((e as Error).message);
+    }
     load();
   };
   const retry = async () => {
@@ -68,6 +110,7 @@ export default function MigrationDetails() {
       const updated = await api.retryFailed(migrationId);
       setMigration(updated);
       setFailedItems([]);
+      setFailedTotal(0);
 
       // Restart polling — but clear the old timer first, or every retry leaves
       // another interval running against the same endpoint.
@@ -90,6 +133,9 @@ export default function MigrationDetails() {
   }
 
   const isActive = ACTIVE_STATES.includes(migration.status);
+
+  // Older API responses (a page kept open across a deploy) have no such field.
+  const failedBatches = migration.failed_batches ?? 0;
 
   return (
     <Page
@@ -119,9 +165,7 @@ export default function MigrationDetails() {
               <Text as="h2" variant="headingMd">
                 Status
               </Text>
-              <Badge tone={migration.status === "completed" ? "success" : "info"}>
-                {migration.status}
-              </Badge>
+              <Badge tone={STATUS_TONE[migration.status] ?? "info"}>{migration.status}</Badge>
             </InlineStack>
           </BlockStack>
         </Card>
@@ -133,9 +177,36 @@ export default function MigrationDetails() {
           </Banner>
         )}
 
+        {/*
+          When a run crawls, the cause is almost always the merchant's own
+          WooCommerce host rather than anything on this side. Saying so while it
+          is still happening is the difference between "this app is broken" and
+          "my server is slow" — and only one of those they can act on.
+        */}
+        {migration.source_health && migration.source_health.status !== "healthy" && (
+          <Banner
+            tone={migration.source_health.status === "failing" ? "critical" : "warning"}
+            title={
+              migration.source_health.status === "failing"
+                ? "Your WooCommerce store is not responding"
+                : "Your WooCommerce store is slow"
+            }
+          >
+            <BlockStack gap="100">
+              <Text as="p">{migration.source_health.message}</Text>
+              <Text as="p" tone="subdued" variant="bodySm">
+                Measured over {migration.source_health.requests} requests to your store
+                {migration.source_health.failures > 0 &&
+                  ` — ${migration.source_health.failures} of them failed`}
+                .
+              </Text>
+            </BlockStack>
+          </Banner>
+        )}
+
         <Card>
           <BlockStack gap="400">
-            {migration.entities.map((e) => {
+            {(migration.entities ?? []).map((e) => {
               // The bar tracks what actually LANDED, not what was attempted. A run
               // where 30 of 50 orders failed used to show a full bar because all 50
               // were "processed" — which reads as success when it is the opposite.
@@ -214,22 +285,48 @@ export default function MigrationDetails() {
           </BlockStack>
         </Card>
 
-        {failedItems.length > 0 && (
+        {(failedItems.length > 0 || failedBatches > 0) && (
           <Card>
             <BlockStack gap="300">
               <InlineStack align="space-between">
                 <Text as="h2" variant="headingMd">
-                  Failed items ({failedItems.length})
+                  {failedItems.length > 0
+                    ? `Failed items (${failedTotal || failedItems.length})`
+                    : "Unfinished batches"}
                 </Text>
                 <Button onClick={retry} loading={retrying}>
                   Retry failed items
                 </Button>
               </InlineStack>
-              <DataTable
-                columnContentTypes={["text", "numeric", "text"]}
-                headings={["Type", "WooCommerce ID", "Reason"]}
-                rows={failedItems.map((i) => [i.entity_type, i.woocommerce_id, i.error ?? ""])}
-              />
+              {/*
+                A batch fails as a whole when its WooCommerce page could not be
+                read at all, and then its records never reach migration_items —
+                so they appear in no list on this page. Without saying so, the
+                merchant sees "completed with errors" and no errors.
+              */}
+              {failedBatches > 0 && (
+                <Banner tone="warning">
+                  <p>
+                    {failedBatches} batch{failedBatches === 1 ? "" : "es"} could not be read from
+                    WooCommerce, so those records were never attempted and are not listed below.
+                    "Retry failed items" runs them again. If this keeps happening, your store is
+                    most likely timing out on large pages — try again when it is under less load.
+                  </p>
+                </Banner>
+              )}
+              {failedTotal > failedItems.length && (
+                <Text as="p" tone="subdued" variant="bodySm">
+                  Showing the first {failedItems.length} of {failedTotal}. Download the log for the
+                  full list — "Retry failed items" retries every one of them, not just those shown.
+                </Text>
+              )}
+              {failedItems.length > 0 && (
+                <DataTable
+                  columnContentTypes={["text", "numeric", "text"]}
+                  headings={["Type", "WooCommerce ID", "Reason"]}
+                  rows={failedItems.map((i) => [i.entity_type, i.woocommerce_id, i.error ?? ""])}
+                />
+              )}
             </BlockStack>
           </Card>
         )}

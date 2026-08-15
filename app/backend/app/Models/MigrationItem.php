@@ -9,7 +9,7 @@ class MigrationItem extends Model
 {
     protected $fillable = [
         'migration_id', 'shop_id', 'entity_type', 'woocommerce_id',
-        'shopify_id', 'status', 'error', 'payload_hash',
+        'shopify_id', 'status', 'error', 'payload_hash', 'attempts',
     ];
 
     public function migration(): BelongsTo
