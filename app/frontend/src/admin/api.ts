@@ -184,6 +184,13 @@ export interface PlanLimits {
   customers: number | null;
   orders: number | null;
   metafields: boolean;
+  /**
+   * One record budget shared across products, customers and orders instead of a
+   * cap on each. Null = meter per entity. Both compose; the tighter one wins.
+   */
+  total?: number | null;
+  /** Negotiated off-platform — not buyable through Shopify billing. */
+  contact_only?: boolean;
 }
 
 export interface Plan {

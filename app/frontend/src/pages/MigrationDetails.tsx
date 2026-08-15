@@ -183,26 +183,46 @@ export default function MigrationDetails() {
           is still happening is the difference between "this app is broken" and
           "my server is slow" — and only one of those they can act on.
         */}
-        {migration.source_health && migration.source_health.status !== "healthy" && (
-          <Banner
-            tone={migration.source_health.status === "failing" ? "critical" : "warning"}
-            title={
-              migration.source_health.status === "failing"
-                ? "Your WooCommerce store is not responding"
-                : "Your WooCommerce store is slow"
-            }
-          >
-            <BlockStack gap="100">
-              <Text as="p">{migration.source_health.message}</Text>
-              <Text as="p" tone="subdued" variant="bodySm">
-                Measured over {migration.source_health.requests} requests to your store
-                {migration.source_health.failures > 0 &&
-                  ` — ${migration.source_health.failures} of them failed`}
-                .
-              </Text>
-            </BlockStack>
-          </Banner>
-        )}
+        {/*
+          A healthy store used to render NOTHING here, which meant the merchant
+          only ever saw this section when something was wrong — and the rest of
+          the time had no way to tell whether their store was being read at all,
+          or whether the app had simply stopped. "Everything is fine" is the
+          answer they are looking for most of the time, so it has to be on screen
+          too; it is just quiet about it instead of shouting.
+        */}
+        {migration.source_health &&
+          (migration.source_health.status === "healthy" ? (
+            <Card>
+              <InlineStack gap="200" blockAlign="center">
+                <Badge tone="success">Store responding</Badge>
+                <Text as="span" tone="subdued" variant="bodySm">
+                  WooCommerce is answering in about {migration.source_health.average_seconds}s per
+                  request, measured over {migration.source_health.requests}
+                  {migration.source_health.requests === 1 ? " request" : " requests"}.
+                </Text>
+              </InlineStack>
+            </Card>
+          ) : (
+            <Banner
+              tone={migration.source_health.status === "failing" ? "critical" : "warning"}
+              title={
+                migration.source_health.status === "failing"
+                  ? "Your WooCommerce store is not responding"
+                  : "Your WooCommerce store is slow"
+              }
+            >
+              <BlockStack gap="100">
+                <Text as="p">{migration.source_health.message}</Text>
+                <Text as="p" tone="subdued" variant="bodySm">
+                  Measured over {migration.source_health.requests} requests to your store
+                  {migration.source_health.failures > 0 &&
+                    ` — ${migration.source_health.failures} of them failed`}
+                  .
+                </Text>
+              </BlockStack>
+            </Banner>
+          ))}
 
         <Card>
           <BlockStack gap="400">

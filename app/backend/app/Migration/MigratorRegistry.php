@@ -3,13 +3,18 @@
 namespace App\Migration;
 
 use App\Migration\Contracts\Migrator;
+use App\Migration\Migrators\ArticleMigrator;
 use App\Migration\Migrators\AttributeMigrator;
+use App\Migration\Migrators\BlogMigrator;
 use App\Migration\Migrators\CategoryMigrator;
+use App\Migration\Migrators\CouponMigrator;
 use App\Migration\Migrators\CustomerMigrator;
 use App\Migration\Migrators\MediaMigrator;
 use App\Migration\Migrators\OrderMigrator;
+use App\Migration\Migrators\PageMigrator;
 use App\Migration\Migrators\ProductMigrator;
 use App\Migration\Migrators\ProductVariationMigrator;
+use App\Migration\Migrators\ReviewMigrator;
 use InvalidArgumentException;
 
 class MigratorRegistry
@@ -23,6 +28,11 @@ class MigratorRegistry
         'media' => MediaMigrator::class,
         'customer' => CustomerMigrator::class,
         'order' => OrderMigrator::class,
+        'coupon' => CouponMigrator::class,
+        'blog' => BlogMigrator::class,
+        'article' => ArticleMigrator::class,
+        'page' => PageMigrator::class,
+        'review' => ReviewMigrator::class,
     ];
 
     public function has(string $entityType): bool

@@ -21,6 +21,12 @@ return [
     // One of: KILOGRAMS, GRAMS, POUNDS, OUNCES.
     'weight_unit' => env('MIGRATION_WEIGHT_UNIT', 'KILOGRAMS'),
 
+    // --- Barcodes (UPC / EAN / GTIN) ---
+    // WooCommerce core has no barcode field, so every plugin that adds one picks
+    // its own meta key. These are the ones in common use; add the merchant's if
+    // it is not here. First key holding a barcode-shaped value wins.
+    'barcode_keys' => env('MIGRATION_BARCODE_KEYS', '_upc,_ean,_gtin,_barcode,_wpm_gtin_code,hwp_product_gtin,_alg_ean,_woo_upc'),
+
     // --- Metafields ---
     // Namespace for all migrated WooCommerce meta_data.
     'meta_namespace' => env('MIGRATION_META_NAMESPACE', 'woocommerce'),

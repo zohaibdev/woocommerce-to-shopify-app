@@ -86,7 +86,12 @@
       "ProductMigrator": "Uses Shopify productSet. Migrates title, description, vendor, productType, status, tags, prices, compareAtPrice, SKU, inventory + tracking, weight (+unit), requiresShipping, variants + options, product AND variant images, metafields, brands, collection links. Variants/images are INLINE here.",
       "CategoryMigrator": "Woo categories -> Shopify collections (incl. category image). Upserts.",
       "CustomerMigrator": "Profile + addresses + custom tags. NO passwords (hash incompatible).",
-      "OrderMigrator": "orderCreate: line items, shipping lines, addresses, financial status, historical processedAt, transactions, tags."
+      "OrderMigrator": "orderCreate: line items, shipping lines, addresses, financial status, historical processedAt, transactions, tags, TAX LINES (rate derived from total_tax/total) and DISCOUNTS (Woo coupon_lines -> one itemFixedDiscountCode; extras and any custom Woo status are written into the order note).",
+      "CouponMigrator": "Woo coupons -> discountCodeBasicCreate. percent/fixed_cart/fixed_product map; any other type FAILS loudly. Restrictions Shopify cannot express (email_restrictions, exclude_sale_items, excluded products/categories, limit_usage_to_x_items) are named in a WARNING on the record — a staff-only code that silently starts working for everyone is worse than one the merchant re-creates by hand.",
+      "BlogMigrator": "WordPress POST CATEGORIES (wp/v2/categories) -> Shopify blogs. WP has one blog with categories; Shopify has many blogs. Upserts, because articles look their blog up by mapping on every run.",
+      "ArticleMigrator": "wp/v2/posts -> articleCreate. Filed under the blog made from the post's category, falling back to a shop-wide 'News' blog (looked up by handle before creating) so a taxonomy mismatch never costs a post. Keeps the original publish date, slug, excerpt, featured image and SEO metafields. COMMENTS are stored as a `comments` JSON metafield, not as Shopify comments — the Admin API cannot create those with their original author or date.",
+      "PageMigrator": "wp/v2/pages (published only) -> pageCreate. Title, body, slug, original publishDate. SEO goes to the reserved global.title_tag / global.description_tag metafields, because Shopify pages have no `seo` field.",
+      "ReviewMigrator": "SOURCE IS REVIEWS, WRITE IS PER PRODUCT — these are different grains and getting it wrong is easy. Paging PRODUCTS (the first cut) made the wizard offer '50,000 reviews' to a store with thirty and re-read the whole catalogue to find them; so count/fetchBatch use products/reviews, sourceId is the REVIEW id (so progress reaches its total), and the metafield write covers the product's WHOLE set, guarded once per product per run by a SafeCache flag. Reviews -> ONE `woocommerce.reviews` JSON metafield per product (count, average, and each review's date/rating/author/verified/content). Shopify's Admin API has NO product reviews and the first-party app was sunset, so this preserves the data rather than pretending to migrate it — the record carries a warning saying a review app or theme block is needed to display them. Unit of work is a PRODUCT, not a review, because a metafield holds the whole set. Reviewer EMAIL is deliberately dropped (personal data in a storefront-readable metafield)."
     },
     "NO_OP_KEPT_FOR_COMPAT": {
       "AttributeMigrator": "Does nothing — options come from ProductMigrator",
@@ -98,8 +103,19 @@
       "product",
       "category",
       "customer",
-      "order"
-    ]
+      "order",
+      "coupon",
+      "blog",
+      "article",
+      "page",
+      "review"
+    ],
+    "field_coverage_notes": {
+      "seo": "App\\Migration\\SeoMeta reads meta title/description from Yoast, Rank Math, All in One SEO and SEOPress (and yoast_head_json for terms, which carry no meta_data in the REST response). An UNEXPANDED plugin template ('%%title%% %%sep%%') is deliberately dropped — Shopify generating something sensible beats publishing the template.",
+      "handles": "product/category/page/blog/article all send the WooCommerce slug as the Shopify handle, so old URLs can be redirected one-to-one. Non-Latin slugs arrive URL-encoded and are dropped rather than shipped as gibberish. `handle` is always in the shed list: Shopify rejects one it has already given another object, and that is worth a URL, not the record.",
+      "barcode": "UPC/EAN/GTIN has no WooCommerce core field. config/migration.php `barcode_keys` lists 8 common plugin meta keys (MIGRATION_BARCODE_KEYS); the first barcode-SHAPED value wins, so a plugin reusing one of those keys for something else cannot put junk on the variant.",
+      "images_in_description": "STILL A GAP. descriptionHtml passes through verbatim, so <img> tags keep pointing at the WooCommerce URL — they break when the old store goes offline. Re-hosting them means parsing the HTML, uploading each file to Shopify Files and rewriting the src."
+    }
   },
   "services": {
     "ShopifyClient": "GraphQL client. Handles 429/THROTTLED, normalizes `errors` (Shopify sometimes returns a STRING not an array), sends variables as object not array, refreshes token before each call.",
@@ -222,7 +238,7 @@
       "token": "random 64 chars, only sha256 hash stored",
       "middleware": "admin.auth -> AuthenticateAdmin"
     },
-    "scopes": "write_products,write_customers,read_products,read_customers,write_inventory,read_orders,write_orders"
+    "scopes": "write_products,write_customers,read_products,read_customers,write_inventory,read_orders,write_orders,write_content,write_discounts — write_content covers blogs/articles/pages, write_discounts covers coupons. ADDING THESE FORCES EVERY INSTALLED MERCHANT TO RE-AUTHORIZE on their next load (ShopifyOAuth diffs granted scopes and re-runs OAuth)."
   },
   "known_gotchas": [
     {
@@ -382,6 +398,18 @@
       "fix": "reviveStalled() resets EVERY 'processing' batch past the cutoff at once (logging the first 10, then a summary line). 'pending' is deliberately not swept — a run plans every batch up front, so hundreds legitimately sit queued for hours. unstickIdle() covers the separate case where work is outstanding but nothing at all is holding it."
     },
     {
+      "issue": "A locked-down wp/v2 made a healthy store look broken",
+      "symptom": "Red 'Your WooCommerce store could not be read' banner in the wizard on a store whose products and orders counted perfectly",
+      "cause": "Blogs/posts/pages come from wp/v2, which a great many hosts hide behind a security plugin — those answer 404, count() correctly throws, and preview() folded ANY count failure into `source_error`.",
+      "fix": "WooCommerceController::CORE_ENTITIES — only wc/v3 entities (product/category/customer/order/coupon) set source_error. The rest are returned as `unavailable_entities` and the wizard shows a calm info banner naming them."
+    },
+    {
+      "issue": "BlogMigrator upserted by calling blogCreate — a duplicate factory",
+      "symptom": "Re-running a migration gave the merchant 'Company News' twice, then three times",
+      "cause": "upserts() returned true (articles look their blog up by mapping every run) but doMigrate ignored $existingShopifyId and always created.",
+      "fix": "write()/run() mirror CategoryMigrator: blogUpdate when a mapping exists, blogCreate when it does not or the blog was deleted in Shopify. Regression test in ContentMigratorsTest asserts the mutation sequence is [create, update]."
+    },
+    {
       "issue": "Telemetry could kill a migration",
       "cause": "SourceHealth::record() and the page cache write straight through the Cache facade — which is the DATABASE store in production — so an oversized blob or a locked table threw out of the middle of a WooCommerce request and failed the batch.",
       "fix": "App\\Support\\SafeCache for every cache use that is an optimisation. SourceHealth::record() is wrapped whole. Cached page limit lowered to 1MB."
@@ -460,7 +488,7 @@
     "prune_logs": "php artisan migration:prune [--days=90]  (cron daily; deletes activity logs of long-finished runs)"
   },
   "testing": {
-    "total_tests": 200,
+    "total_tests": 225,
     "command": "cd app/backend && php artisan test",
     "suites": {
       "MigrationEngineTest": "queue dispatch, dependency ordering, idempotency, custom tags",

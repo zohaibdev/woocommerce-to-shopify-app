@@ -89,6 +89,38 @@ abstract class AbstractMigrator implements Migrator
     }
 
     /**
+     * A WooCommerce slug as a Shopify handle, so /product/blue-shirt can be
+     * redirected to /products/blue-shirt one-to-one.
+     *
+     * Lives here because products, categories, pages, blogs and articles all
+     * need exactly this and had five identical copies of it.
+     *
+     * The URL-DECODE is the part that matters. WordPress percent-encodes
+     * non-Latin slugs, so an Arabic product arrives as
+     * `%d8%a7%d9%84%d9%85...` — and stripping that byte by byte produces
+     * `d8-a7-d9-84-d9-85`, which Shopify accepts happily and then serves as the
+     * product's permanent URL forever. Decoding first means a mixed slug keeps
+     * its Latin part (`café-noir` -> `caf-noir`) and a fully non-Latin one
+     * returns null, letting Shopify generate something readable instead.
+     */
+    protected function handleFromSlug(mixed $slug): ?string
+    {
+        $slug = trim((string) $slug);
+
+        if ($slug === '') {
+            return null;
+        }
+
+        $decoded = mb_strtolower(rawurldecode($slug));
+
+        $handle = trim(preg_replace('/-+/', '-', preg_replace('/[^a-z0-9-]+/', '-', $decoded)), '-');
+
+        // Shopify caps handles at 255, and a handle of only stripped characters
+        // is no handle at all.
+        return $handle === '' ? null : mb_substr($handle, 0, 255);
+    }
+
+    /**
      * When true, the migrator re-processes already-migrated items as an UPSERT
      * (update existing / recreate if deleted) instead of skipping. This keeps a
      * re-run correct even if the merchant deleted the Shopify object. When false,

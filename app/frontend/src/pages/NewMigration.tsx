@@ -30,8 +30,20 @@ const ENTITY_OPTIONS = [
     detail: "Includes variants, options, prices, SKUs, inventory, weight, images and metafields",
   },
   { label: "Categories", value: "category", detail: "Become Shopify collections" },
-  { label: "Customers", value: "customer", detail: "Profiles and addresses (passwords can't be migrated)" },
-  { label: "Orders", value: "order", detail: "Historical orders with line items and totals" },
+  { label: "Customers", value: "customer", detail: "Profiles, billing and shipping addresses (passwords can't be migrated)" },
+  { label: "Orders", value: "order", detail: "Historical orders with line items, tax, discounts and totals" },
+  { label: "Coupons", value: "coupon", detail: "Become Shopify discount codes" },
+  { label: "Blogs", value: "blog", detail: "Your post categories become Shopify blogs" },
+  { label: "Blog posts", value: "article", detail: "Posts with their original publish dates and images" },
+  { label: "Pages", value: "page", detail: "About, Shipping, Returns and any other published page" },
+  {
+    label: "Product reviews",
+    value: "review",
+    // Said here rather than after the fact: Shopify has no built-in reviews, so
+    // a merchant who ticks this and then sees no stars on their storefront would
+    // reasonably think the migration failed.
+    detail: "Saved on each product as data — needs a review app or theme block to display",
+  },
 ];
 
 const WEIGHT_UNITS = [
@@ -84,6 +96,7 @@ export default function NewMigration() {
   const [counts, setCounts] = useState<EntityCount[]>([]);
   const [planName, setPlanName] = useState<string | null>(null);
   const [pool, setPool] = useState<PlanPool | null>(null);
+  const [unavailable, setUnavailable] = useState<string[]>([]);
   const [notifyMe, setNotifyMe] = useState(prefs.emailNotifications);
   const [notifyEmail, setNotifyEmail] = useState("");
   const [emailDeliveryConfigured, setEmailDeliveryConfigured] = useState(true);
@@ -95,7 +108,10 @@ export default function NewMigration() {
   useEffect(() => {
     api
       .preview()
-      .then(({ counts, plan, pool, shop_email, email_delivery_configured, active_migration_id, source_error }) => {
+      .then(({
+        counts, plan, pool, shop_email, email_delivery_configured,
+        active_migration_id, source_error, unavailable_entities,
+      }) => {
         // One run at a time — the API refuses a second with a 409, so there is
         // nothing to be gained by letting the merchant fill the form in first.
         if (active_migration_id) {
@@ -106,6 +122,7 @@ export default function NewMigration() {
 
         setCounts(counts);
         setSourceError(source_error ?? null);
+        setUnavailable(unavailable_entities ?? []);
         setPlanName(plan?.name ?? null);
         setPool(pool ?? null);
         setEmailDeliveryConfigured(email_delivery_configured !== false);
@@ -274,6 +291,25 @@ export default function NewMigration() {
                 plan — it is arranged directly with us rather than through Shopify billing.
               </Text>
             </BlockStack>
+          </Banner>
+        )}
+
+        {/*
+          wp/v2 (blogs, posts, pages) is locked down on a great many WordPress
+          hosts. That is not a broken store and must not read as one — but a
+          merchant staring at "0 pages" on a site with twenty of them deserves to
+          know it is their host, not their data.
+        */}
+        {!loadingCounts && !sourceError && unavailable.length > 0 && (
+          <Banner tone="info" title="Some content could not be read from WordPress">
+            <Text as="p">
+              Your host does not expose the WordPress endpoints for{" "}
+              {unavailable
+                .map((t) => ENTITY_OPTIONS.find((o) => o.value === t)?.label.toLowerCase() ?? t)
+                .join(", ")}
+              , so those cannot be migrated. Everything else on this page is unaffected. This is
+              usually a security plugin or a firewall blocking <code>/wp-json/wp/v2/</code>.
+            </Text>
           </Banner>
         )}
 

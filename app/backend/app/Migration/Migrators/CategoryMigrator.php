@@ -5,6 +5,7 @@ namespace App\Migration\Migrators;
 use App\Migration\AbstractMigrator;
 use App\Migration\Concerns\ShedsRejectedFields;
 use App\Migration\MigrationItemResult;
+use App\Migration\SeoMeta;
 use App\Models\StoreMigration;
 use App\Models\WoocommerceConnection;
 use App\Services\WooCommerceClient;
@@ -63,8 +64,17 @@ class CategoryMigrator extends AbstractMigrator
     {
         $input = [
             'title' => $wooItem['name'] ?? 'Untitled',
+            // Keeps /product-category/shoes as /collections/shoes, so the
+            // merchant's old category URLs can be redirected one-to-one.
+            'handle' => $this->handleFromSlug($wooItem['slug'] ?? null),
             'descriptionHtml' => $wooItem['description'] ?? '',
+            // A term carries no meta_data in the WooCommerce REST response, so
+            // this only finds anything when Yoast exposes yoast_head_json —
+            // see SeoMeta. Empty is normal and harmless.
+            'seo' => SeoMeta::forRecord($wooItem),
         ];
+
+        $input = array_filter($input, fn ($v) => $v !== null && $v !== []);
 
         // Category image -> collection image.
         if ($src = data_get($wooItem, 'image.src')) {
@@ -84,7 +94,9 @@ class CategoryMigrator extends AbstractMigrator
                 return is_array($id) ? [null, $id] : [$id, []];
             },
             $input,
-            ['image', 'descriptionHtml'],
+            // `handle` is shed like the rest: Shopify rejects one it has already
+            // given another collection, and that is worth a URL, not a collection.
+            ['image', 'descriptionHtml', 'seo', 'handle'],
         );
     }
 

@@ -128,21 +128,74 @@ class CustomerMigrator extends AbstractMigrator
     }
 
 
+    /**
+     * The customer's addresses — billing first, then shipping when it is a
+     * different place.
+     *
+     * Only the billing address used to be migrated, and even that arrived without
+     * a name or a company on it. A merchant who ships to an office, or to anyone
+     * other than the account holder, lost that address entirely — and Shopify
+     * shows the name and company ON the address label, so a nameless address is
+     * one somebody has to retype before it can be used.
+     */
     private function addresses(array $woo): array
     {
-        $b = $woo['billing'] ?? [];
-        if (empty($b['address_1'])) {
-            return [];
+        $addresses = [];
+
+        foreach ([$woo['billing'] ?? [], $woo['shipping'] ?? []] as $source) {
+            $address = $this->address($source);
+
+            if ($address !== null) {
+                $addresses[] = $address;
+            }
         }
 
-        return [[
-            'address1' => $b['address_1'] ?? null,
-            'address2' => $b['address_2'] ?? null,
-            'city' => $b['city'] ?? null,
-            'provinceCode' => $b['state'] ?? null,
-            'countryCode' => $b['country'] ?? null,
-            'zip' => $b['postcode'] ?? null,
-            'phone' => PhoneNumber::toE164($b['phone'] ?? null, $b['country'] ?? null),
-        ]];
+        // A store where shipping simply mirrors billing — the common case — would
+        // otherwise give every customer the same address twice.
+        //
+        // The comparison deliberately ignores PHONE. WooCommerce's billing block
+        // has a phone field and its shipping block does not, so comparing whole
+        // records found a difference on almost every customer alive and the
+        // de-duplication never fired once in practice — which is precisely the
+        // duplicate it was written to prevent.
+        $seen = [];
+        $unique = [];
+
+        foreach ($addresses as $address) {
+            $signature = serialize(array_diff_key($address, ['phone' => null]));
+
+            if (isset($seen[$signature])) {
+                continue;
+            }
+
+            $seen[$signature] = true;
+            $unique[] = $address;
+        }
+
+        return $unique;
+    }
+
+    /** One Woo address block as a Shopify MailingAddressInput, or null if empty. */
+    private function address(array $a): ?array
+    {
+        if (empty($a['address_1'])) {
+            return null;
+        }
+
+        return array_filter([
+            // Shown on the address label. Falls back to the account name so an
+            // address is never anonymous when we know who it belongs to.
+            'firstName' => $a['first_name'] ?? null,
+            'lastName' => $a['last_name'] ?? null,
+            'company' => $a['company'] ?? null,
+            'address1' => $a['address_1'] ?? null,
+            'address2' => $a['address_2'] ?? null,
+            'city' => $a['city'] ?? null,
+            'provinceCode' => $a['state'] ?? null,
+            'countryCode' => $a['country'] ?? null,
+            'zip' => $a['postcode'] ?? null,
+            // Woo's shipping block has no phone; billing's is used where present.
+            'phone' => PhoneNumber::toE164($a['phone'] ?? null, $a['country'] ?? null),
+        ], fn ($v) => $v !== null && $v !== '');
     }
 }

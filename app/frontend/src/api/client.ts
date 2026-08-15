@@ -340,6 +340,12 @@ export const api = {
       active_migration_id: number | null;
       /** Set when the counts could not be read — expired API keys, store down. */
       source_error: string | null;
+      /**
+       * Optional endpoints this store does not expose — usually wp/v2 (blogs,
+       * posts, pages) behind a security plugin. Not an error; those entities
+       * simply cannot be offered.
+       */
+      unavailable_entities?: string[];
     }>("/woocommerce/preview"),
 
   listMigrations: (page = 1, perPage = 10) =>

@@ -20,6 +20,19 @@ use Illuminate\Http\Request;
 
 class MigrationController extends Controller
 {
+    /**
+     * Entities that drag another one in with them.
+     *
+     * These are the dependencies whose ABSENCE breaks the run rather than merely
+     * degrading it: a review has no product to attach to, an article has no blog
+     * to sit in, a variation has no attribute to build options from.
+     */
+    private const IMPLIED_ENTITIES = [
+        'variation' => 'attribute',
+        'review' => 'product',
+        'article' => 'blog',
+    ];
+
     public function index(Request $request): JsonResponse
     {
         $shop = CurrentShop::resolve($request);
@@ -84,11 +97,19 @@ class MigrationController extends Controller
             ->values()
             ->all();
 
-        // Reject unknown entities and enforce the variation->attribute dependency.
+        // Reject unknown entities, then pull in anything the selection cannot work
+        // without. A dependency is only honoured by the registry's ordering when
+        // it is IN the selection, so picking reviews without products would have
+        // failed every single review with "the product was not migrated" — a run
+        // that is guaranteed to fail is not one worth starting.
         $entities = array_values(array_filter($data['entities'], fn ($e) => $registry->has($e)));
-        if (in_array('variation', $entities, true) && ! in_array('attribute', $entities, true)) {
-            $entities[] = 'attribute';
+
+        foreach (self::IMPLIED_ENTITIES as $selected => $required) {
+            if (in_array($selected, $entities, true) && ! in_array($required, $entities, true)) {
+                $entities[] = $required;
+            }
         }
+
         abort_if(empty($entities), 422, 'No valid entities selected');
 
         $shop = CurrentShop::resolve($request);

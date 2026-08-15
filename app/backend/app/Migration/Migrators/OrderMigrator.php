@@ -60,19 +60,23 @@ class OrderMigrator extends AbstractMigrator
     {
         $currency = $woo['currency'] ?? 'USD';
         $email = data_get($woo, 'billing.email');
+        $discounts = $this->discountCodes($woo, $currency);
 
         $order = array_filter([
             'currency' => $currency,
             'email' => $email ?: null,
             'processedAt' => $this->date($woo['date_created'] ?? null),
             'financialStatus' => $this->financialStatus($woo['status'] ?? ''),
-            'note' => $woo['customer_note'] ?? null,
+            'note' => $this->note($woo, $discounts),
             'tags' => $this->tags($migration, $woo),
             'lineItems' => $this->lineItems($woo, $currency),
             'shippingLines' => $this->shippingLines($woo, $currency),
             'billingAddress' => $this->address($woo['billing'] ?? []),
             'shippingAddress' => $this->address(($woo['shipping'] ?? []) ?: ($woo['billing'] ?? [])),
             'transactions' => $this->transactions($woo, $currency),
+            // Shopify accepts a single code per order; discountCodes() sorts the
+            // largest first and note() records any others.
+            'discountCode' => $discounts[0] ?? null,
         ], fn ($v) => $v !== null && $v !== []);
 
         if (empty($order['lineItems'])) {
@@ -103,8 +107,48 @@ class OrderMigrator extends AbstractMigrator
                 return [data_get($body, 'data.orderCreate.order.id'), $errors];
             },
             $order,
-            ['transactions', 'shippingAddress', 'billingAddress', 'shippingLines', 'tags', 'note', 'processedAt'],
+            ['transactions', 'shippingAddress', 'billingAddress', 'shippingLines', 'tags', 'note', 'processedAt', 'discountCode'],
         );
+    }
+
+    /**
+     * The customer's note, plus anything about this order that could not be
+     * expressed in Shopify's own fields.
+     *
+     * A WooCommerce order can carry several coupons and a custom status from a
+     * plugin. Shopify has one discount slot and a fixed set of statuses, so the
+     * remainder is written down here rather than dropped — a merchant
+     * reconciling a historical order needs to be able to see what was actually
+     * applied to it.
+     */
+    private function note(array $woo, array $discounts): ?string
+    {
+        $parts = [];
+
+        if ($note = trim((string) ($woo['customer_note'] ?? ''))) {
+            $parts[] = $note;
+        }
+
+        if (count($discounts) > 1) {
+            $extra = collect(array_slice($discounts, 1))
+                ->map(fn ($d) => data_get($d, 'itemFixedDiscountCode.code'))
+                ->filter()
+                ->implode(', ');
+
+            if ($extra !== '') {
+                $parts[] = "Additional WooCommerce coupons on this order: {$extra}.";
+            }
+        }
+
+        // A status Shopify has no equivalent for (wc-awaiting-shipment and the
+        // like, from an order-management plugin) collapses into PENDING, so the
+        // original is recorded before it is lost.
+        $status = (string) ($woo['status'] ?? '');
+        if ($status !== '' && ! in_array($status, self::KNOWN_STATUSES, true)) {
+            $parts[] = "Original WooCommerce status: {$status}.";
+        }
+
+        return empty($parts) ? null : mb_substr(implode("\n\n", $parts), 0, 5000);
     }
 
     private function lineItems(array $woo, string $currency): array
@@ -123,8 +167,82 @@ class OrderMigrator extends AbstractMigrator
                 'title' => $this->lineTitle($li),
                 'quantity' => $qty,
                 'priceSet' => $this->money($unit, $currency),
-            ], fn ($v) => $v !== null);
+                'taxLines' => $this->lineTaxes($li, $currency),
+            ], fn ($v) => $v !== null && $v !== []);
         })->values()->all();
+    }
+
+    /**
+     * Tax charged on one line.
+     *
+     * Orders used to arrive with no tax on them at all, so a merchant's historical
+     * revenue read low by whatever their VAT rate is — and any report built on
+     * that data was wrong in a way nobody notices until an accountant does.
+     *
+     * Shopify wants the rate as a fraction; WooCommerce gives the amount and the
+     * line subtotal, so the rate is derived. `priceSet` is what Shopify actually
+     * charges against — the rate is descriptive.
+     */
+    private function lineTaxes(array $li, string $currency): array
+    {
+        $tax = (float) ($li['total_tax'] ?? 0);
+
+        if ($tax <= 0) {
+            return [];
+        }
+
+        $net = (float) ($li['total'] ?? 0);
+
+        // No net to divide by (a fully discounted line that still carried tax)
+        // means no rate to state. Sending a tax line without one risks Shopify
+        // rejecting it — and `lineItems` is NOT sheddable, so that rejection
+        // would fail the ENTIRE order rather than costing it this one number.
+        // Losing the tax on such a line is the cheaper mistake by a long way.
+        if ($net <= 0) {
+            return [];
+        }
+
+        return [[
+            'title' => 'Tax',
+            'rate' => round($tax / $net, 4),
+            'priceSet' => $this->money($tax, $currency),
+        ]];
+    }
+
+    /**
+     * Order-level discounts, as one Shopify discount code per Woo coupon.
+     *
+     * WooCommerce records the coupon that was used and what it took off; Shopify
+     * needs the amount as a fixed value because the historical rule behind a
+     * percentage coupon no longer exists anywhere it can evaluate. Without this
+     * the order totalled MORE than the customer actually paid, which is the one
+     * direction a merchant will definitely notice.
+     */
+    private function discountCodes(array $woo, string $currency): array
+    {
+        return collect($woo['coupon_lines'] ?? [])
+            ->map(function ($line) use ($currency) {
+                $amount = (float) ($line['discount'] ?? 0);
+                $code = trim((string) ($line['code'] ?? ''));
+
+                if ($amount <= 0 || $code === '') {
+                    return null;
+                }
+
+                return [
+                    'itemFixedDiscountCode' => [
+                        'code' => mb_substr($code, 0, 255),
+                        'amountSet' => $this->money($amount, $currency),
+                    ],
+                ];
+            })
+            ->filter()
+            // Shopify takes ONE discount code on an order. A Woo order can carry
+            // several; the largest is the honest single representation, and the
+            // rest are named in the order note so nothing is silently dropped.
+            ->sortByDesc(fn ($d) => (float) data_get($d, 'itemFixedDiscountCode.amountSet.shopMoney.amount'))
+            ->values()
+            ->all();
     }
 
     /**
@@ -189,6 +307,15 @@ class OrderMigrator extends AbstractMigrator
     {
         return ['shopMoney' => ['amount' => (string) (float) $amount, 'currencyCode' => $currency]];
     }
+
+    /**
+     * WooCommerce statuses this maps deliberately. Anything else is a plugin's
+     * custom status, which collapses to PENDING — note() records the original so
+     * the merchant can still tell what the order really was.
+     */
+    private const KNOWN_STATUSES = [
+        'completed', 'processing', 'refunded', 'cancelled', 'failed', 'pending', 'on-hold', 'checkout-draft',
+    ];
 
     private function financialStatus(string $wooStatus): string
     {

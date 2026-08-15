@@ -39,7 +39,11 @@ return [
         'api_key' => env('SHOPIFY_API_KEY'),
         'api_secret' => env('SHOPIFY_API_SECRET'),
         'api_version' => env('SHOPIFY_API_VERSION', '2024-10'),
-        'scopes' => env('SHOPIFY_SCOPES', 'write_products,write_customers,read_products,read_customers,write_inventory,read_orders,write_orders'),
+        // write_content covers blogs, articles and pages; write_discounts covers
+        // coupons. Adding a scope means every already-installed merchant is asked
+        // to re-authorize on their next load — ShopifyOAuth diffs the granted
+        // scopes against these and re-runs the OAuth flow when they differ.
+        'scopes' => env('SHOPIFY_SCOPES', 'write_products,write_customers,read_products,read_customers,write_inventory,read_orders,write_orders,write_content,write_discounts'),
         // Public base URL of this app (the tunnel URL in dev). Used to build the
         // OAuth redirect_uri and the post-install redirect back into the app.
         'app_url' => rtrim(env('SHOPIFY_APP_URL', env('APP_URL')), '/'),

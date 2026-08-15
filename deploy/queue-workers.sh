@@ -53,6 +53,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # the home directory, which is where it belongs on shared hosting).
 if [ -z "${BACKEND_DIR:-}" ]; then
     for candidate in \
+        "$SCRIPT_DIR" \
         "$SCRIPT_DIR/../app/backend" \
         "$HOME/public_html/app/backend" \
         "$SCRIPT_DIR/public_html/app/backend"

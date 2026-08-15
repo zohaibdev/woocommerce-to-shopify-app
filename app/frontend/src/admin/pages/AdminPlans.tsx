@@ -38,6 +38,10 @@ interface Draft {
   customers: string;
   orders: string;
   metafields: boolean;
+  /** One shared record budget across all three. Blank = meter each separately. */
+  total: string;
+  /** Arranged with us directly; not buyable through Shopify billing. */
+  contactOnly: boolean;
 }
 
 const emptyDraft: Draft = {
@@ -50,6 +54,8 @@ const emptyDraft: Draft = {
   customers: "",
   orders: "",
   metafields: true,
+  total: "",
+  contactOnly: false,
 };
 
 const toDraft = (p: Plan): Draft => ({
@@ -63,6 +69,8 @@ const toDraft = (p: Plan): Draft => ({
   customers: capToField(p.limits?.customers),
   orders: capToField(p.limits?.orders),
   metafields: p.limits?.metafields !== false,
+  total: capToField(p.limits?.total),
+  contactOnly: p.limits?.contact_only === true,
 });
 
 export default function AdminPlans() {
@@ -102,6 +110,8 @@ export default function AdminPlans() {
           customers: fieldToCap(draft.customers),
           orders: fieldToCap(draft.orders),
           metafields: draft.metafields,
+          total: fieldToCap(draft.total),
+          contact_only: draft.contactOnly,
         },
       };
 
@@ -306,8 +316,40 @@ export default function AdminPlans() {
               </FormLayout.Group>
 
               <Text as="h3" variant="headingSm">
-                Limits
+                Shared allowance
               </Text>
+              <TextField
+                label="Total records"
+                type="number"
+                value={draft.total}
+                onChange={(v) => set("total", v)}
+                placeholder="Leave blank to cap each entity separately"
+                helpText={
+                  draft.total
+                    ? `One budget of ${Number(draft.total).toLocaleString()} records spent across products, customers and orders together — not ${Number(draft.total).toLocaleString()} of each. Re-migrating a record already migrated does not spend it again.`
+                    : "Set this to sell one shared record budget instead of a separate cap per entity."
+                }
+                autoComplete="off"
+              />
+
+              <Text as="h3" variant="headingSm">
+                Per-entity limits
+              </Text>
+              {/*
+                Both kinds of metering compose and the tighter one wins, but a
+                pooled plan usually wants these blank — otherwise the merchant is
+                held to whichever number is smaller and the headline budget is a
+                promise the app will not keep.
+              */}
+              {draft.total !== "" && (
+                <Banner tone="info">
+                  <p>
+                    This plan is metered by the shared allowance above. Leave the three fields below
+                    blank unless you also want a hard ceiling on a specific entity — where both
+                    apply, the smaller one wins.
+                  </p>
+                </Banner>
+              )}
               <FormLayout.Group>
                 <TextField
                   label="Products"
@@ -337,6 +379,13 @@ export default function AdminPlans() {
               <Text as="p" variant="bodySm" tone="subdued">
                 Blank = unlimited · 0 = not included in this plan
               </Text>
+
+              <Checkbox
+                label="Arranged with us directly (not sold through Shopify billing)"
+                checked={draft.contactOnly}
+                onChange={(v) => set("contactOnly", v)}
+                helpText="Merchants see a 'Contact us' button instead of Upgrade, and the subscribe API refuses this plan."
+              />
 
               <Checkbox
                 label="Include metafields & brands"

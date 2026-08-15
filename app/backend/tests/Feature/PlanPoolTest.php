@@ -238,6 +238,92 @@ class PlanPoolTest extends TestCase
         $this->assertStringContainsString('1,000 records', $verdict['reason']);
     }
 
+    // ----------------------------------------------------------- admin panel
+
+    /** @test */
+    public function editing_a_pooled_plan_in_the_admin_panel_keeps_its_pool(): void
+    {
+        $admin = \App\Models\AdminUser::create([
+            'email' => 'admin@example.com',
+            'name' => 'Admin',
+            'password' => 'secret123',
+            'is_super' => true,
+        ]);
+
+        $token = 'tok_'.str_repeat('a', 60);
+        $admin->forceFill(['api_token_hash' => hash('sha256', $token)])->save();
+
+        $plan = Plan::create([
+            'code' => 'pro',
+            'name' => 'Pro',
+            'price' => 49,
+            'interval' => 'monthly',
+            'active' => true,
+            'limits' => ['total' => 20000, 'metafields' => true, 'contact_only' => false],
+        ]);
+
+        // The admin changes nothing but the price. The limits payload is merged
+        // against a list of defaults, and `total` was missing from that list — so
+        // simply opening this plan and saving turned a 20,000-record pooled plan
+        // into an unlimited one, with nothing anywhere to show it had happened.
+        $response = $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->patchJson("/api/admin/plans/{$plan->id}", [
+                'code' => 'pro',
+                'name' => 'Pro',
+                'price' => 59,
+                'limits' => ['total' => 20000, 'metafields' => true],
+            ]);
+
+        $response->assertOk();
+
+        $this->assertSame(20000, $plan->fresh()->limits['total']);
+        $this->assertSame(20000, $plan->fresh()->poolLimit());
+    }
+
+    /** @test */
+    public function the_admin_panel_can_turn_pooling_on_and_off(): void
+    {
+        $admin = \App\Models\AdminUser::create([
+            'email' => 'admin2@example.com',
+            'name' => 'Admin',
+            'password' => 'secret123',
+            'is_super' => true,
+        ]);
+
+        $token = 'tok_'.str_repeat('b', 60);
+        $admin->forceFill(['api_token_hash' => hash('sha256', $token)])->save();
+
+        $plan = Plan::create([
+            'code' => 'basic',
+            'name' => 'Basic',
+            'price' => 19,
+            'interval' => 'monthly',
+            'active' => true,
+            'limits' => ['products' => 2000, 'customers' => 2000, 'orders' => 1000, 'metafields' => true],
+        ]);
+
+        $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->patchJson("/api/admin/plans/{$plan->id}", [
+                'code' => 'basic',
+                'name' => 'Basic',
+                'price' => 19,
+                'limits' => ['total' => 5000, 'metafields' => true],
+            ])->assertOk();
+
+        $this->assertSame(5000, $plan->fresh()->poolLimit());
+
+        // …and back off again.
+        $this->withHeaders(['Authorization' => "Bearer {$token}"])
+            ->patchJson("/api/admin/plans/{$plan->id}", [
+                'code' => 'basic',
+                'name' => 'Basic',
+                'price' => 19,
+                'limits' => ['products' => 2000, 'metafields' => true],
+            ])->assertOk();
+
+        $this->assertNull($plan->fresh()->poolLimit());
+    }
+
     // ------------------------------------------------------------- enterprise
 
     /** @test */

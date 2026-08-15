@@ -8,6 +8,7 @@ use App\Migration\ImageSizeResolver;
 use App\Migration\MetafieldMapper;
 use App\Migration\MigrationItemResult;
 use App\Migration\MigrationRunner;
+use App\Migration\SeoMeta;
 use App\Models\MigrationItem;
 use App\Models\StoreMigration;
 use App\Services\WooCommerceClient;
@@ -209,11 +210,18 @@ class ProductMigrator extends AbstractMigrator
 
         $input = [
             'title' => $woo['name'] ?? 'Untitled',
+            // The WooCommerce slug, so /product/blue-shirt stays /products/blue-shirt.
+            // Without it Shopify derives a handle from the TITLE, which silently
+            // breaks every inbound link and every redirect the merchant sets up
+            // against their old URLs.
+            'handle' => $this->handleFromSlug($woo['slug'] ?? null),
             'descriptionHtml' => $woo['description'] ?? '',
             'vendor' => $this->vendor($migration, $woo),
             'productType' => data_get($woo, 'categories.0.name') ?: null,
             'status' => $this->status($woo['status'] ?? 'publish'),
             'tags' => $this->tags($migration, $woo),
+            // Meta title/description from whichever SEO plugin the store uses.
+            'seo' => SeoMeta::forRecord($woo),
             'files' => $this->mediaIsUnreachable($migration) ? [] : $this->files($migration, $woo, $variations, $warnings),
             'collections' => $this->collections($migration, $woo),
             'metafields' => $metafields,
@@ -242,7 +250,10 @@ class ProductMigrator extends AbstractMigrator
         // Optional fields Shopify may reject on messy Woo data. Losing any of them
         // is a warning; losing the product is not acceptable. Title, options and
         // variants are deliberately absent — without them there is no product.
-        $optional = ['files', 'metafields', 'collections', 'tags', 'vendor', 'productType', 'descriptionHtml'];
+        // `handle` is here because a slug Shopify already gave another product is
+        // rejected outright ("Handle has already been taken") — dropping it costs
+        // one product's URL, keeping it would cost the product.
+        $optional = ['files', 'metafields', 'collections', 'tags', 'vendor', 'productType', 'descriptionHtml', 'seo', 'handle'];
 
         return $this->writeSheddingBadFields(
             function (array $attempt) use ($migration, $existingShopifyId) {
@@ -588,6 +599,9 @@ class ProductMigrator extends AbstractMigrator
 
         $inventoryItem = array_filter([
             'sku' => $data['sku'] ?? null,
+            // UPC/EAN/GTIN. WooCommerce core has no such field, so it lives in
+            // meta under whichever key the merchant's plugin chose — see barcode().
+            'barcode' => $this->barcode($data),
             'tracked' => ! empty($data['manage_stock']),
             'requiresShipping' => ! ($data['virtual'] ?? false),
             'measurement' => $this->weight($data),
@@ -638,6 +652,46 @@ class ProductMigrator extends AbstractMigrator
         $price = $regular !== '' ? $regular : ($current !== '' ? $current : '0');
 
         return [(string) $price, null];
+    }
+
+    /**
+     * UPC / EAN / GTIN, from wherever the merchant's plugin put it.
+     *
+     * WooCommerce core has no barcode field. Every plugin that adds one picks its
+     * own meta key, so this checks the ones in common use and takes the first
+     * that holds something barcode-shaped. Extend with MIGRATION_BARCODE_KEYS.
+     */
+    private function barcode(array $data): ?string
+    {
+        $keys = array_filter(array_map(
+            'trim',
+            explode(',', (string) config('migration.barcode_keys', '')),
+        ));
+
+        foreach ($data['meta_data'] ?? [] as $meta) {
+            $key = is_array($meta) ? ($meta['key'] ?? null) : null;
+
+            if (! is_string($key) || ! in_array($key, $keys, true)) {
+                continue;
+            }
+
+            $value = $meta['value'] ?? null;
+
+            if (! is_scalar($value)) {
+                continue;
+            }
+
+            // Barcodes are digits, occasionally with hyphens or spaces. Anything
+            // else in one of these keys is a plugin storing something unrelated,
+            // and Shopify would reject it or show nonsense on the variant.
+            $value = trim((string) $value);
+
+            if ($value !== '' && preg_match('/^[0-9][0-9\- ]{5,}$/', $value)) {
+                return mb_substr($value, 0, 255);
+            }
+        }
+
+        return null;
     }
 
     private function weight(array $data): ?array

@@ -14,6 +14,14 @@ use Illuminate\Http\Request;
 
 class WooCommerceController extends Controller
 {
+    /**
+     * Entities whose failure means the STORE is unreadable rather than one
+     * optional endpoint being unavailable. These all come from `wc/v3`, which the
+     * consumer key authenticates — if they fail, the credentials or the store are
+     * the problem and the merchant needs to know before starting anything.
+     */
+    private const CORE_ENTITIES = ['product', 'category', 'customer', 'order', 'coupon'];
+
     /** Save credentials and test the connection. */
     public function connect(Request $request): JsonResponse
     {
@@ -90,15 +98,29 @@ class WooCommerceController extends Controller
         // Only entities that actually perform work. Variants, images and
         // attributes migrate INLINE with products, so counting them separately
         // double-counted the estimate and created pointless batch jobs.
-        $display = ['product', 'category', 'customer', 'order'];
+        $display = ['product', 'category', 'customer', 'order', 'coupon', 'blog', 'article', 'page', 'review'];
         $available = [];
+        $unreadable = [];
 
         foreach ($display as $type) {
             try {
                 $available[$type] = $registry->make($type)->count($connection);
             } catch (\Throwable $e) {
                 $available[$type] = 0;
-                $sourceError ??= $e->getMessage();
+
+                // Only a CORE entity failing means the store itself is unreadable.
+                //
+                // Blogs, posts and pages come from `wp/v2`, which a great many
+                // hosts lock down or hide behind a security plugin — and those
+                // answer 404, which count() correctly reports as a failure. Left
+                // undistinguished, a perfectly healthy store whose products and
+                // orders counted fine got a red "your store could not be read"
+                // banner because its blog endpoint was private.
+                if (in_array($type, self::CORE_ENTITIES, true)) {
+                    $sourceError ??= $e->getMessage();
+                } else {
+                    $unreadable[] = $type;
+                }
             }
         }
 
@@ -149,6 +171,10 @@ class WooCommerceController extends Controller
             'active_migration_id' => MigrationController::activeMigrationId($shop),
             // Set when the counts could not be read at all — see above.
             'source_error' => $sourceError,
+            // Optional endpoints this store does not expose (usually wp/v2 behind
+            // a security plugin). Not an error — the merchant just cannot pick
+            // those, and deserves to be told why rather than seeing a blank zero.
+            'unavailable_entities' => $unreadable,
         ]);
     }
 

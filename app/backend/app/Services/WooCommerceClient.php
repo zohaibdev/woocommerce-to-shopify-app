@@ -34,6 +34,26 @@ class WooCommerceClient
 
     public function __construct(private readonly WoocommerceConnection $connection) {}
 
+    /**
+     * The API base a resource belongs to.
+     *
+     * Products, orders and coupons live in WooCommerce's own namespace; posts,
+     * pages and post categories are plain WordPress and live in `wp/v2`. Letting
+     * a resource name its namespace keeps one paginated, timed, retrying client
+     * serving both instead of growing a second copy of all of it.
+     *
+     * NOTE: the consumer key/secret authenticates `wc/v3`, not `wp/v2`. Published
+     * WordPress content is readable without authentication, so this works — but
+     * drafts and private pages are not visible to us, which is why the content
+     * migrators only ever claim to migrate published records.
+     */
+    private function baseFor(string $resource): string
+    {
+        $root = rtrim($this->connection->store_url, '/').'/wp-json/';
+
+        return str_starts_with($resource, 'wp/v2/') ? $root : $root.'wc/v3/';
+    }
+
     private function client(?string $baseUrl = null): PendingRequest
     {
         $base = $baseUrl ?? rtrim($this->connection->store_url, '/').'/wp-json/wc/v3/';
@@ -121,7 +141,7 @@ class WooCommerceClient
      */
     public function total(string $resource, array $query = []): int
     {
-        $res = $this->timed(fn () => $this->client()->get($resource, array_merge(['per_page' => 1], $query)));
+        $res = $this->timed(fn () => $this->client($this->baseFor($resource))->get($resource, array_merge(['per_page' => 1], $query)));
 
         // With per_page=1 the page count IS the record count, so either header
         // answers the question.
@@ -171,7 +191,7 @@ class WooCommerceClient
 
         /** Items on a page, or null if the request failed. */
         $size = function (int $page) use ($resource, $query, $per): ?int {
-            $res = $this->timed(fn () => $this->client()->get($resource, array_merge([
+            $res = $this->timed(fn () => $this->client($this->baseFor($resource))->get($resource, array_merge([
                 'page' => $page,
                 'per_page' => $per,
                 'orderby' => 'id',
@@ -247,7 +267,7 @@ class WooCommerceClient
      */
     public function list(string $resource, int $page, int $perPage, array $query = []): array
     {
-        $res = $this->timed(fn () => $this->client()->get($resource, array_merge([
+        $res = $this->timed(fn () => $this->client($this->baseFor($resource))->get($resource, array_merge([
             'page' => $page,
             'per_page' => $perPage,
             'orderby' => 'id',
@@ -279,7 +299,7 @@ class WooCommerceClient
      */
     public function listIds(string $resource, int $page, int $perPage, array $query = []): ?array
     {
-        $res = $this->timed(fn () => $this->client()->get($resource, array_merge([
+        $res = $this->timed(fn () => $this->client($this->baseFor($resource))->get($resource, array_merge([
             'page' => $page,
             'per_page' => $perPage,
             'orderby' => 'id',

@@ -79,10 +79,28 @@ class AdminPlanController extends Controller
             'limits.customers' => ['sometimes', 'nullable', 'integer', 'min:0'],
             'limits.orders' => ['sometimes', 'nullable', 'integer', 'min:0'],
             'limits.metafields' => ['sometimes', 'boolean'],
+            // One shared record budget across products+customers+orders instead
+            // of a cap on each. See App\Support\PlanPool.
+            'limits.total' => ['sometimes', 'nullable', 'integer', 'min:0'],
+            // Negotiated off-platform; not buyable through Shopify billing.
+            'limits.contact_only' => ['sometimes', 'boolean'],
         ]);
 
+        // The defaults below are what an UNSPECIFIED key means, so every key the
+        // app understands has to appear here. `total` and `contact_only` were
+        // missing, and because this is an array_merge against the request, a plan
+        // that HAD them lost them the moment anyone opened it in the admin panel
+        // and pressed save — silently turning a 20,000-record pooled plan into an
+        // unlimited one, and making Enterprise buyable through Shopify checkout.
         $data['limits'] = array_merge(
-            ['products' => null, 'customers' => null, 'orders' => null, 'metafields' => true],
+            [
+                'products' => null,
+                'customers' => null,
+                'orders' => null,
+                'metafields' => true,
+                'total' => null,
+                'contact_only' => false,
+            ],
             $request->input('limits', []),
         );
 
