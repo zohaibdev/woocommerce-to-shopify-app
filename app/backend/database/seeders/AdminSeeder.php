@@ -33,6 +33,13 @@ class AdminSeeder extends Seeder
                     'customers' => 10,
                     'orders' => 0,
                     'metafields' => false,
+                    // Content features are what the paid tiers are for. 0 means
+                    // "not in this plan": the wizard disables the entity and says
+                    // why, instead of letting a free shop migrate them and only
+                    // finding out afterwards.
+                    'coupons' => 0,
+                    'blogs' => 0,
+                    'reviews' => 0,
                 ],
             ],
             [
@@ -44,6 +51,9 @@ class AdminSeeder extends Seeder
                     'customers' => 2000,
                     'orders' => 1000,
                     'metafields' => true,
+                    'coupons' => null,
+                    'blogs' => null,
+                    'reviews' => null,
                 ],
             ],
             [
@@ -58,6 +68,9 @@ class AdminSeeder extends Seeder
                     // records across all three bought the same plan.
                     'total' => 20000,
                     'metafields' => true,
+                    'coupons' => null,
+                    'blogs' => null,
+                    'reviews' => null,
                 ],
             ],
             [
@@ -69,6 +82,9 @@ class AdminSeeder extends Seeder
                     'customers' => null,
                     'orders' => null,
                     'metafields' => true,
+                    'coupons' => null,
+                    'blogs' => null,
+                    'reviews' => null,
                     // Negotiated and invoiced off-platform, so the app must not
                     // offer a Shopify charge screen for it — the checkout could
                     // not deliver what the plan actually is.

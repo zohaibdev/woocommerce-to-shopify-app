@@ -84,10 +84,17 @@ class ReviewMigrator extends AbstractMigrator
         $shopifyProductId = $this->shopifyIdFor($migration, 'product', $productId);
 
         if (! $shopifyProductId) {
-            return MigrationItemResult::failed(
-                "Product {$productId} was not migrated, so this review has nothing to attach to. "
-                    .'Include Products in the migration and retry.',
-            );
+            // SKIPPED, not failed. On a capped plan this is the NORMAL case, not
+            // an error: products stop at the plan limit while reviews are
+            // unmetered, so every review of product 11 upwards lands here. Marking
+            // those failed turned an ordinary free-plan run into
+            // "completed_with_errors" with hundreds of red rows the merchant could
+            // do nothing about, and buried the real failures among them.
+            return MigrationItemResult::skipped()->withWarnings([
+                "The product this review belongs to (WooCommerce #{$productId}) has not been "
+                    .'migrated, so the review had nowhere to attach. Migrate that product — or '
+                    .'upgrade if your plan limit stopped it — and run this again.',
+            ]);
         }
 
         // Another review of the same product already wrote the complete set this
@@ -97,6 +104,7 @@ class ReviewMigrator extends AbstractMigrator
             return MigrationItemResult::success($shopifyProductId);
         }
 
+        $warnings = [];
         $reviews = $this->reviewsFor($migration, $productId, $warnings);
 
         if (empty($reviews)) {
@@ -121,11 +129,11 @@ class ReviewMigrator extends AbstractMigrator
             ]],
         ]);
 
-        $errors = $shopify->userErrors($body, 'metafieldsSet');
-
-        if (empty($errors)) {
-            $errors = $shopify->topLevelErrors($body);
+        if ($fatal = $this->fatalShopifyError($shopify, $body)) {
+            return MigrationItemResult::failed($fatal);
         }
+
+        $errors = $shopify->userErrors($body, 'metafieldsSet');
 
         if (! empty($errors)) {
             return MigrationItemResult::failed(json_encode($errors));

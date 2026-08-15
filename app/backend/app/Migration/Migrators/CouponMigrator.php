@@ -108,14 +108,16 @@ class CouponMigrator extends AbstractMigrator
                 $shopify = $this->shopify($migration);
                 $body = $shopify->graphql(self::CREATE_MUTATION, ['basicCodeDiscount' => $attempt]);
 
-                $errors = $shopify->userErrors($body, 'discountCodeBasicCreate');
-
-                // Surface top-level errors too (e.g. the write_discounts scope).
-                if (empty($errors)) {
-                    $errors = $shopify->topLevelErrors($body);
+                // A missing write_discounts scope is Shopify refusing the request,
+                // not an objection to the coupon — shedding fields cannot help.
+                if ($fatal = $this->fatalShopifyError($shopify, $body)) {
+                    return MigrationItemResult::failed($fatal);
                 }
 
-                return [data_get($body, 'data.discountCodeBasicCreate.codeDiscountNode.id'), $errors];
+                return [
+                    data_get($body, 'data.discountCodeBasicCreate.codeDiscountNode.id'),
+                    $shopify->userErrors($body, 'discountCodeBasicCreate'),
+                ];
             },
             $input,
             // The code, its value and startsAt are what Shopify requires; an

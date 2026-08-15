@@ -65,6 +65,10 @@ class BatchRecoveryTest extends TestCase
             'woocommerce_connection_id' => $conn->id,
             'status' => 'processing',
             'selected_entities' => [$entity],
+            // Planning is a phase of its own now (see PlanBatchesJob), and
+            // nothing may finalize a run while it is outstanding. A fixture that
+            // hands out ready-made chunks is a run whose planning is done.
+            'planned_at' => now(),
         ]);
 
         $migration->setRelation('shop', $shop);

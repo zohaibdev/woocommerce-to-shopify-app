@@ -5,8 +5,10 @@ namespace App\Http\Controllers;
 use App\Migration\MigratorRegistry;
 use App\Models\WoocommerceConnection;
 use App\Services\MailSettings;
+use App\Services\ShopifyPlan;
 use App\Services\WooCommerceClient;
 use App\Support\CurrentShop;
+use App\Support\MigrationEstimate;
 use App\Support\PlanAllowance;
 use App\Support\PlanPool;
 use Illuminate\Http\JsonResponse;
@@ -25,25 +27,85 @@ class WooCommerceController extends Controller
     /** Save credentials and test the connection. */
     public function connect(Request $request): JsonResponse
     {
-        $data = $request->validate([
-            'store_url' => ['required', 'url'],
-            'consumer_key' => ['required', 'string'],
-            'consumer_secret' => ['required', 'string'],
-        ]);
+        // A merchant typing "mystore.com" is not making a mistake — they are
+        // giving us the store. Rejecting it with "must be a valid URL" for a
+        // missing scheme made the form feel broken, so it is normalised before
+        // validation rather than bounced back.
+        $request->merge(['store_url' => self::normalizeUrl($request->input('store_url'))]);
 
         $shop = CurrentShop::resolve($request);
+        $existing = $shop->woocommerceConnection;
+
+        $data = $request->validate([
+            'store_url' => ['required', 'url'],
+            // Optional ONLY when we already hold a key/secret. Requiring them
+            // meant a merchant who wanted to correct a typo in their store URL
+            // had to go back to WordPress and generate a whole new key pair,
+            // because the app never shows the secret it already has.
+            'consumer_key' => [$existing ? 'nullable' : 'required', 'string'],
+            'consumer_secret' => [$existing ? 'nullable' : 'required', 'string'],
+        ]);
+
+        $storeUrl = rtrim($data['store_url'], '/');
+        // `??` as well as `?:` — a nullable field the client omitted entirely is
+        // absent from the validated data, not present-and-empty.
+        $key = ($data['consumer_key'] ?? null) ?: $existing?->consumer_key;
+        $secret = ($data['consumer_secret'] ?? null) ?: $existing?->consumer_secret;
+
+        abort_if(! $key || ! $secret, 422, 'Enter the consumer key and secret.');
+
+        // TEST BEFORE SAVING.
+        //
+        // This used to write the credentials first and test afterwards, so one
+        // typo permanently destroyed a working connection: the old key was gone,
+        // the new one did not work, and the only way back was to generate a fresh
+        // pair in WordPress. Nothing is persisted now until the store answers.
+        $candidate = new WoocommerceConnection([
+            'store_url' => $storeUrl,
+            'consumer_key' => $key,
+            'consumer_secret' => $secret,
+        ]);
+
+        $result = (new WooCommerceClient($candidate))->test();
+
+        if (! $result['ok'] && $existing) {
+            return response()->json(
+                $this->present($existing) + [
+                    'error' => $result['error'],
+                    // Said explicitly, because "it failed" and "it failed and I
+                    // also threw away what was working" are very different things
+                    // to a merchant staring at this screen.
+                    'kept_existing' => true,
+                ],
+                422,
+            );
+        }
 
         $connection = WoocommerceConnection::updateOrCreate(
             ['shop_id' => $shop->id],
             [
-                'store_url' => rtrim($data['store_url'], '/'),
-                'consumer_key' => $data['consumer_key'],
-                'consumer_secret' => $data['consumer_secret'],
-                'status' => 'disconnected',
+                'store_url' => $storeUrl,
+                'consumer_key' => $key,
+                'consumer_secret' => $secret,
+                'status' => $result['ok'] ? 'connected' : 'error',
+                'wc_version' => $result['wc_version'],
+                'wp_version' => $result['wp_version'],
+                'last_tested_at' => now(),
             ],
         );
 
-        return $this->runTest($connection);
+        return response()->json(
+            $this->present($connection->refresh()) + ['error' => $result['error']],
+            $result['ok'] ? 200 : 422,
+        );
+    }
+
+    /** Accept "mystore.com" as readily as "https://mystore.com/". */
+    private static function normalizeUrl(mixed $url): string
+    {
+        $url = trim((string) $url);
+
+        return $url !== '' && ! preg_match('~^https?://~i', $url) ? 'https://'.$url : $url;
     }
 
     /**
@@ -98,7 +160,7 @@ class WooCommerceController extends Controller
         // Only entities that actually perform work. Variants, images and
         // attributes migrate INLINE with products, so counting them separately
         // double-counted the estimate and created pointless batch jobs.
-        $display = ['product', 'category', 'customer', 'order', 'coupon', 'blog', 'article', 'page', 'review'];
+        $display = ['product', 'category', 'customer', 'order', 'coupon', 'blog', 'article', 'review'];
         $available = [];
         $unreadable = [];
 
@@ -147,16 +209,44 @@ class WooCommerceController extends Controller
             $verdicts[$type] = PlanAllowance::forEntity($shop, $type, $available[$type], $pool);
         }
 
+        // How hard this shop's own Shopify budget lets us push. Needed before the
+        // counts, because each one carries its own share of the time estimate.
+        $workers = app(ShopifyPlan::class)->concurrencyFor($shop);
+
         // Ship the plan verdict with the count so the wizard can disable what the
         // merchant cannot migrate instead of failing after they start.
+        //
+        // `estimated_seconds` is per entity as well as in total, because the
+        // wizard's summary has to answer for whatever the merchant ticked — and
+        // this is computed before they have ticked anything.
         $counts = array_map(
-            fn (string $type) => ['type' => $type, 'count' => $available[$type]] + $verdicts[$type],
+            fn (string $type) => [
+                'type' => $type,
+                'count' => $available[$type],
+                'estimated_seconds' => MigrationEstimate::secondsFor(
+                    $type,
+                    (int) ($verdicts[$type]['migratable'] ?? 0),
+                    $workers,
+                ),
+            ] + $verdicts[$type],
             $display,
+        );
+
+        // Roughly how long everything would take, so the merchant can decide
+        // whether to wait or come back tomorrow. Built from what will ACTUALLY be
+        // migrated — the plan-capped `migratable`, not the raw store counts.
+        $estimate = MigrationEstimate::forPlan(
+            array_column($counts, 'migratable', 'type'),
+            $workers,
         );
 
         return response()->json([
             'counts' => $counts,
             'plan' => $plan ? ['code' => $plan->code, 'name' => $plan->name] : null,
+            // {seconds, basis, workers}, or null when there is nothing to migrate.
+            // `basis: plan` says out loud that this is modelled rather than
+            // measured — the run's own live estimate replaces it within a minute.
+            'estimate' => $estimate,
             // One shared allowance across products, customers and orders, or null
             // when this plan meters each entity on its own.
             'pool' => $poolSnapshot,

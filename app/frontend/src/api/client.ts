@@ -70,7 +70,12 @@ function errorMessage(status: number, body: string): string {
     const message =
       parsed?.message ||
       // Laravel validation: {"errors": {"field": ["reason"]}}
-      (parsed?.errors && Object.values(parsed.errors as Record<string, string[]>)[0]?.[0]);
+      (parsed?.errors && Object.values(parsed.errors as Record<string, string[]>)[0]?.[0]) ||
+      // The WooCommerce connection endpoints answer 422 with the connection plus
+      // an `error` explaining what the merchant's store actually said. Without
+      // this the single most important message in the app — "HTTP 401: your API
+      // key was revoked" — was thrown away and shown as "Request failed (422)".
+      parsed?.error;
 
     if (typeof message === "string" && message.trim()) return message;
   } catch {
@@ -171,6 +176,13 @@ export interface EntityCount {
    */
   pooled: boolean;
   reason: string | null;
+  /**
+   * This entity's own share of the time estimate, for the records it will
+   * actually migrate. Per entity so the summary can answer for whatever the
+   * merchant ticked — the preview is computed before they tick anything. Safe
+   * to sum: the spread across parallel workers is a division.
+   */
+  estimated_seconds: number;
 }
 
 /**
@@ -208,6 +220,29 @@ export interface SourceHealth {
   message: string;
 }
 
+/**
+ * How long a migration will take.
+ *
+ * `basis` is the part that matters to how it is worded. "plan" is modelled from
+ * record counts and this shop's Shopify parallelism — a rough shape, useful for
+ * telling minutes from overnight. "progress" is derived from the run's OWN
+ * elapsed time, so it already accounts for the merchant's WooCommerce host,
+ * their image sizes and their plan. Presenting a modelled number as if it were
+ * measured is how an estimate loses a merchant's trust for good.
+ */
+export interface PlanEstimate {
+  seconds: number;
+  basis: "plan";
+  workers: number;
+}
+
+export interface RunEstimate {
+  seconds_remaining: number;
+  basis: "plan" | "progress";
+  workers: number;
+  records_per_minute: number | null;
+}
+
 export interface Migration {
   id: number;
   name: string | null;
@@ -225,6 +260,8 @@ export interface Migration {
   completed_at: string | null;
   created_at: string;
   source_health: SourceHealth | null;
+  /** Only while the run is active — afterwards it describes nothing. */
+  estimate: RunEstimate | null;
   /**
    * Chunks whose records were never read from WooCommerce at all. They produce
    * no failed ITEMS, so this is the only signal that part of the catalogue is
@@ -266,6 +303,14 @@ export interface PlanLimits {
   total?: number | null;
   /** Arranged with us directly, not buyable through Shopify billing. */
   contact_only?: boolean;
+  /**
+   * Content features, metered on their own and never out of the record budget
+   * above. null/absent = unlimited, 0 = not included in this plan.
+   * `blogs` covers blogs AND their posts — one feature, one number.
+   */
+  coupons?: number | null;
+  blogs?: number | null;
+  reviews?: number | null;
 }
 
 export interface BillingPlan {
@@ -335,6 +380,8 @@ export const api = {
       plan: { code: string; name: string } | null;
       /** Shared record budget, or null when the plan meters each entity. */
       pool: PlanPool | null;
+      /** Null when there is nothing to migrate. */
+      estimate: PlanEstimate | null;
       shop_email: string | null;
       email_delivery_configured: boolean;
       active_migration_id: number | null;
@@ -361,6 +408,12 @@ export const api = {
     weightUnit?: string;
     /** standard (1024px) | large (1536px) | full (original files). */
     imageSize?: string;
+    /**
+     * Copy images embedded in descriptions onto Shopify too, so a description
+     * does not break when the WooCommerce store is switched off. Costs an upload
+     * per new image, so it is opt-in.
+     */
+    rehostDescriptionImages?: boolean;
     /** Blank = no email when the migration finishes. */
     notifyEmail?: string;
   }) =>
@@ -373,6 +426,7 @@ export const api = {
         name: opts.name ?? "",
         weight_unit: opts.weightUnit ?? "KILOGRAMS",
         image_size: opts.imageSize ?? "standard",
+        rehost_description_images: opts.rehostDescriptionImages ?? false,
         notify_email: opts.notifyEmail ?? "",
       }),
     }),

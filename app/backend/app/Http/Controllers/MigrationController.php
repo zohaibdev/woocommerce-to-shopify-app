@@ -12,7 +12,9 @@ use App\Models\MigrationItem;
 use App\Models\MigrationLog;
 use App\Models\Shop;
 use App\Models\StoreMigration;
+use App\Services\ShopifyPlan;
 use App\Support\CurrentShop;
+use App\Support\MigrationEstimate;
 use App\Support\PlanAllowance;
 use App\Support\SourceHealth;
 use Illuminate\Http\JsonResponse;
@@ -31,6 +33,10 @@ class MigrationController extends Controller
         'variation' => 'attribute',
         'review' => 'product',
         'article' => 'blog',
+        // Not a hard dependency, but always what the merchant means: blogs on
+        // their own arrive in Shopify empty, with none of the posts that made
+        // them worth migrating — which reads as the feature not working.
+        'blog' => 'article',
     ];
 
     public function index(Request $request): JsonResponse
@@ -83,6 +89,11 @@ class MigrationController extends Controller
             // Shopify downloads every image itself and productSet waits for it, so
             // image size is the single biggest lever the merchant has over speed.
             'image_size' => ['sometimes', 'in:standard,large,full'],
+            // Copy the images embedded in descriptions onto Shopify too. Off by
+            // default: it costs an upload and a short wait per NEW image, and a
+            // merchant who is keeping their WooCommerce store online does not
+            // need it.
+            'rehost_description_images' => ['sometimes', 'boolean'],
             // Migrations can run for hours; the merchant can ask to be told when
             // this one is done instead of watching the page.
             'notify_email' => ['sometimes', 'nullable', 'email', 'max:255'],
@@ -104,15 +115,29 @@ class MigrationController extends Controller
         // that is guaranteed to fail is not one worth starting.
         $entities = array_values(array_filter($data['entities'], fn ($e) => $registry->has($e)));
 
+        // Resolved before the implication loop, which needs the plan to know
+        // whether a dependency is even allowed.
+        $shop = CurrentShop::resolve($request);
+
         foreach (self::IMPLIED_ENTITIES as $selected => $required) {
-            if (in_array($selected, $entities, true) && ! in_array($required, $entities, true)) {
-                $entities[] = $required;
+            if (! in_array($selected, $entities, true) || in_array($required, $entities, true)) {
+                continue;
             }
+
+            // Never drag in something the plan blocks. The locked check below
+            // aborts the whole request naming the offending entity, so adding a
+            // locked dependency here refused the run over an entity the merchant
+            // never chose and could not see — "your plan does not include:
+            // product" when all they ticked was Reviews.
+            if ($shop->limitFor($required) === 0) {
+                continue;
+            }
+
+            $entities[] = $required;
         }
 
         abort_if(empty($entities), 422, 'No valid entities selected');
 
-        $shop = CurrentShop::resolve($request);
         $connection = $shop->woocommerceConnection;
         abort_unless($connection && $connection->status === 'connected', 422, 'WooCommerce not connected');
 
@@ -153,6 +178,7 @@ class MigrationController extends Controller
                     ?: config('migration.weight_unit', 'KILOGRAMS'),
                 'image_size' => $request->input('image_size')
                     ?: config('migration.image_size', 'standard'),
+                'rehost_description_images' => $request->boolean('rehost_description_images'),
                 'notify_email' => trim((string) $request->input('notify_email', '')) ?: null,
             ],
         ]);
@@ -377,6 +403,25 @@ class MigrationController extends Controller
         return StoreMigration::where('shop_id', $shop->id)->findOrFail($id);
     }
 
+    /**
+     * Batches this shop may run in parallel, resolved once per request.
+     *
+     * Every endpoint here is shop-scoped, so this is the same answer for every
+     * migration in a response — and the list endpoint returns up to fifty of
+     * them. Asking per row would be fifty lookups (and, on a shop whose limits
+     * have not been measured yet, fifty relation loads) to print one number that
+     * cannot differ between them.
+     *
+     * @var array<int, int>
+     */
+    private array $workerCache = [];
+
+    private function workersFor(StoreMigration $m): int
+    {
+        return $this->workerCache[$m->shop_id] ??= app(ShopifyPlan::class)
+            ->concurrencyFor($m->shop()->first() ?? new Shop());
+    }
+
     private function present(StoreMigration $m): array
     {
         return [
@@ -395,6 +440,17 @@ class MigrationController extends Controller
             'started_at' => $m->started_at,
             'completed_at' => $m->completed_at,
             'created_at' => $m->created_at,
+            // How much longer this has to run. Only while it IS running: after it
+            // ends the number describes nothing, and before it starts the wizard's
+            // own estimate is the one the merchant already saw.
+            //
+            // `basis` is either 'progress' (derived from this run's own measured
+            // pace, so it accounts for the merchant's host, their image sizes and
+            // their Shopify plan) or 'plan' (the static model, while the run is
+            // still too young to have an opinion).
+            'estimate' => in_array($m->status, StoreMigration::ACTIVE_STATES, true)
+                ? MigrationEstimate::forRun($m, $this->workersFor($m))
+                : null,
             // Chunks whose records were never read from WooCommerce. They produce
             // no failed ITEMS, so without this the page had no way to know they
             // existed and offered the merchant no retry.

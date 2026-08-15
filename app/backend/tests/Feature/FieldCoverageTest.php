@@ -344,6 +344,111 @@ class FieldCoverageTest extends TestCase
     }
 
     /** @test */
+    public function a_discounted_line_is_not_discounted_twice(): void
+    {
+        $captured = null;
+        $this->captureShopify($captured, 'orderCreate', 'order');
+
+        // A real Woo order with a 10.00 coupon on a 100.00 line: `subtotal` keeps
+        // the pre-discount figure, while `total` AND `price` are both already
+        // reduced. The old code read `price`, so Shopify was handed the discounted
+        // unit price and then told to take the coupon off again — every order with
+        // a coupon totalled less than the customer actually paid.
+        (new OrderMigrator())->migrateItem($this->migration(), [
+            'id' => 31,
+            'currency' => 'GBP',
+            'status' => 'completed',
+            'billing' => ['email' => 'buyer@example.com'],
+            'line_items' => [[
+                'name' => 'Shirt',
+                'quantity' => 2,
+                'subtotal' => '100.00',
+                'total' => '90.00',
+                'price' => 45,
+            ]],
+            'coupon_lines' => [['code' => 'SAVE10', 'discount' => '10.00']],
+        ]);
+
+        // 100.00 / 2 — the pre-discount unit price. Shopify subtracts the 10.00
+        // discount code itself, landing on the 90.00 that was really charged.
+        $this->assertSame('50', $captured['lineItems'][0]['priceSet']['shopMoney']['amount']);
+        $this->assertSame('SAVE10', $captured['discountCode']['itemFixedDiscountCode']['code']);
+    }
+
+    /** @test */
+    public function a_line_without_a_subtotal_still_prices_before_discount(): void
+    {
+        $captured = null;
+        $this->captureShopify($captured, 'orderCreate', 'order');
+
+        // An old order, or a line written by a plugin, may carry no `subtotal`.
+        // It must fall back to `total` — never to `price`, which would reinstate
+        // the double discount for exactly the records nobody checks.
+        (new OrderMigrator())->migrateItem($this->migration(), [
+            'id' => 32,
+            'currency' => 'USD',
+            'status' => 'completed',
+            'billing' => ['email' => 'buyer@example.com'],
+            'line_items' => [['name' => 'Mug', 'quantity' => 4, 'total' => '80.00', 'price' => 20]],
+        ]);
+
+        $this->assertSame('20', $captured['lineItems'][0]['priceSet']['shopMoney']['amount']);
+    }
+
+    /** @test */
+    public function a_rejected_handle_costs_the_url_not_the_product(): void
+    {
+        $attempts = [];
+
+        Http::fake(function ($request) use (&$attempts) {
+            $body = json_decode($request->body(), true);
+            $query = (string) data_get($body, 'query');
+
+            if (str_contains($query, 'locations')) {
+                return Http::response(['data' => ['locations' => ['nodes' => [['id' => 'gid://shopify/Location/1']]]]], 200);
+            }
+
+            if (! str_contains($query, 'productSet')) {
+                return Http::response(['data' => []], 200);
+            }
+
+            $input = data_get($body, 'variables.input');
+            $attempts[] = $input;
+
+            // Shopify prefixes the path with the MUTATION ARGUMENT here, so the
+            // rejection arrives as ["input","handle"] rather than ["handle"].
+            // Reading only the first segment meant "input" shadowed the real
+            // field, nothing could be shed, and the whole product was lost over a
+            // URL collision — the most common rejection there is on a store that
+            // already has products.
+            if (array_key_exists('handle', $input)) {
+                return Http::response(['data' => ['productSet' => [
+                    'product' => null,
+                    'userErrors' => [['field' => ['input', 'handle'], 'message' => 'Handle has already been taken']],
+                ]]], 200);
+            }
+
+            return Http::response(['data' => ['productSet' => [
+                'product' => ['id' => 'gid://shopify/Product/9'],
+                'userErrors' => [],
+            ]]], 200);
+        });
+
+        $result = (new ProductMigrator())->migrateItem($this->migration(), [
+            'id' => 77,
+            'name' => 'Blue Shirt',
+            'slug' => 'blue-shirt',
+            'type' => 'simple',
+            'regular_price' => '10.00',
+        ]);
+
+        $this->assertSame('success', $result->status, 'the product must survive a taken handle');
+        $this->assertCount(2, $attempts, 'it should retry once without the handle');
+        $this->assertArrayNotHasKey('handle', $attempts[1]);
+        $this->assertStringContainsString('Handle', $result->warning);
+    }
+
+    /** @test */
     public function a_line_with_tax_but_no_net_total_sends_no_tax_line(): void
     {
         $captured = null;

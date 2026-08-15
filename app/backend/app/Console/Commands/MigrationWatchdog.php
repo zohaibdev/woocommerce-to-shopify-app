@@ -2,10 +2,13 @@
 
 namespace App\Console\Commands;
 
+use App\Jobs\PlanBatchesJob;
 use App\Jobs\StartMigrationJob;
 use App\Migration\MigrationRunner;
 use App\Models\MigrationBatch;
 use App\Models\StoreMigration;
+use App\Support\QueueKeeper;
+use App\Support\QueueMaintenance;
 use Illuminate\Console\Command;
 
 /**
@@ -34,13 +37,29 @@ class MigrationWatchdog extends Command
         $stallMinutes = max(2, (int) $this->option('stall'));
         $cutoff = now()->subMinutes($stallMinutes);
 
+        // Before anything else: a job that was abandoned is work the merchant is
+        // still waiting for. Leaving it in failed_jobs until somebody runs
+        // `queue:retry all` by hand meant a transient blip — a dropped
+        // connection, a five-second Shopify outage — cost records permanently.
+        $requeued = QueueMaintenance::retryFailedJobs();
+
+        if ($requeued > 0) {
+            $this->info("Re-queued {$requeued} failed job(s).");
+        }
+
         $migrations = StoreMigration::whereIn('status', ['pending', 'processing'])->get();
 
         if ($migrations->isEmpty()) {
             $this->info('No active migrations.');
 
+            // Still make sure something is draining the queue: the re-queued
+            // jobs above, and any run whose rows the sweep below never sees.
+            QueueKeeper::ensureRunning();
+
             return self::SUCCESS;
         }
+
+        QueueKeeper::ensureRunning();
 
         $nudged = 0;
 
@@ -57,15 +76,38 @@ class MigrationWatchdog extends Command
 
     private function nudge(StoreMigration $migration, \Illuminate\Support\Carbon $cutoff): bool
     {
-        // Never planned (or planning died) — start it over. Batch rows are rebuilt
-        // from scratch and migration_items keeps it from duplicating anything.
-        if (! MigrationBatch::where('migration_id', $migration->id)->exists()) {
+        // Counting never happened — start the whole thing over. Batch rows are
+        // rebuilt from scratch and migration_items keeps it from duplicating
+        // anything.
+        if (! $migration->started_at && ! MigrationBatch::where('migration_id', $migration->id)->exists()) {
             if ($migration->updated_at && $migration->updated_at->gt($cutoff)) {
                 return false;
             }
 
             MigrationRunner::log($migration->id, 'warning', null, 'Watchdog: migration never started planning — restarting.');
             StartMigrationJob::dispatch($migration->id);
+
+            return true;
+        }
+
+        // Counting happened but the chunks were never fully worked out. Nothing
+        // may finalize a run in this state, so a dead planner freezes it — and
+        // unlike a stalled chunk there is no batch row whose updated_at would
+        // show it. PlanBatchesJob resumes from the entity's own planned_items, so
+        // asking again is free when the planner is in fact alive and well.
+        if ($migration->planned_at === null) {
+            if ($this->touchedSince($migration, $cutoff)) {
+                return false;
+            }
+
+            MigrationRunner::log(
+                $migration->id,
+                'warning',
+                null,
+                'Watchdog: working out which records to migrate had stopped — resuming it.',
+            );
+
+            PlanBatchesJob::dispatch($migration->id);
 
             return true;
         }
@@ -80,6 +122,23 @@ class MigrationWatchdog extends Command
 
         return $this->reviveStalled($migration, $cutoff)
             || $this->unstickIdle($migration, $cutoff);
+    }
+
+    /**
+     * Has anything happened to this run recently?
+     *
+     * Planning writes to the migration row and to its chunks, so the newest of
+     * those is the honest answer to "is something still working on this".
+     */
+    private function touchedSince(StoreMigration $migration, \Illuminate\Support\Carbon $cutoff): bool
+    {
+        if ($migration->updated_at && $migration->updated_at->gt($cutoff)) {
+            return true;
+        }
+
+        $lastBatch = MigrationBatch::where('migration_id', $migration->id)->max('updated_at');
+
+        return $lastBatch !== null && \Illuminate\Support\Carbon::parse($lastBatch)->gt($cutoff);
     }
 
     /**

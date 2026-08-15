@@ -58,6 +58,20 @@ class ArticleMigrator extends AbstractMigrator
     /** Comments read per post. Beyond this the tail is summarised, not stored. */
     private const MAX_COMMENTS = 100;
 
+    /**
+     * The query every read of this resource uses.
+     *
+     * `_embed` is the part that is easy to leave out and impossible to notice:
+     * a plain `wp/v2/posts` response carries `featured_media` as a bare
+     * ATTACHMENT ID, not a URL. Without asking WordPress to embed it, image()
+     * had nothing to read and every migrated post arrived with no featured
+     * image — silently, because a post with no image is perfectly valid.
+     *
+     * It is scoped to `wp:featuredmedia` rather than a bare `_embed=1`, which
+     * would also drag every author and term object into each page.
+     */
+    private const QUERY = ['status' => 'publish', '_embed' => 'wp:featuredmedia'];
+
     public function entityType(): string
     {
         return 'article';
@@ -76,13 +90,13 @@ class ArticleMigrator extends AbstractMigrator
 
     protected function wooSource(): ?array
     {
-        return ['wp/v2/posts', ['status' => 'publish']];
+        return ['wp/v2/posts', self::QUERY];
     }
 
     public function fetchBatch(WoocommerceConnection $connection, int $page, int $perPage): array
     {
         return (new WooCommerceClient($connection))
-            ->list('wp/v2/posts', $page, $perPage, ['status' => 'publish']);
+            ->list('wp/v2/posts', $page, $perPage, self::QUERY);
     }
 
     protected function doMigrate(StoreMigration $migration, array $woo, ?string $existingShopifyId = null): MigrationItemResult
@@ -99,7 +113,10 @@ class ArticleMigrator extends AbstractMigrator
             'blogId' => $blogId,
             'title' => trim((string) data_get($woo, 'title.rendered', '')) ?: 'Untitled',
             'handle' => $this->handleFromSlug($woo['slug'] ?? null),
-            'body' => data_get($woo, 'content.rendered') ?: '',
+            // A blog post is mostly images. Left pointing at WordPress they break
+            // the day the old site goes away, which is exactly what this app is
+            // for — so they are re-hosted on Shopify when the merchant asked.
+            'body' => $this->rehostDescription($migration, data_get($woo, 'content.rendered') ?: '', $warnings),
             'summary' => $this->summary($woo),
             'tags' => $this->tags($migration),
             'isPublished' => true,
@@ -115,13 +132,16 @@ class ArticleMigrator extends AbstractMigrator
                 $shopify = $this->shopify($migration);
                 $body = $shopify->graphql(self::CREATE_MUTATION, ['article' => $attempt]);
 
-                $errors = $shopify->userErrors($body, 'articleCreate');
-
-                if (empty($errors)) {
-                    $errors = $shopify->topLevelErrors($body);
+                // The write_content scope, or Shopify having an outage — either
+                // way it is not the article's fields, so do not shed any.
+                if ($fatal = $this->fatalShopifyError($shopify, $body)) {
+                    return MigrationItemResult::failed($fatal);
                 }
 
-                return [data_get($body, 'data.articleCreate.article.id'), $errors];
+                return [
+                    data_get($body, 'data.articleCreate.article.id'),
+                    $shopify->userErrors($body, 'articleCreate'),
+                ];
             },
             $input,
             // blogId, title and body make the article; everything else is worth a

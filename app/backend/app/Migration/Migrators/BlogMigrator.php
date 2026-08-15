@@ -84,6 +84,12 @@ class BlogMigrator extends AbstractMigrator
             function (array $attempt) use ($migration, $existingShopifyId) {
                 $id = $this->write($migration, $attempt, $existingShopifyId);
 
+                // Shopify refused the request itself — dropping the handle will
+                // not earn us the write_content scope.
+                if ($id instanceof MigrationItemResult) {
+                    return $id;
+                }
+
                 return is_array($id) ? [null, $id] : [$id, []];
             },
             $input,
@@ -102,7 +108,7 @@ class BlogMigrator extends AbstractMigrator
      * Returns the gid, an errors array on a real failure, or null when the blog
      * we meant to update has been deleted in Shopify (caller recreates).
      */
-    private function write(StoreMigration $migration, array $input, ?string $existingShopifyId): string|array|null
+    private function write(StoreMigration $migration, array $input, ?string $existingShopifyId): MigrationItemResult|string|array|null
     {
         if (! $existingShopifyId) {
             return $this->run($migration, self::CREATE_MUTATION, 'blogCreate', ['blog' => $input]);
@@ -113,23 +119,34 @@ class BlogMigrator extends AbstractMigrator
             'blog' => $input,
         ]);
 
-        return $id === null
-            ? $this->run($migration, self::CREATE_MUTATION, 'blogCreate', ['blog' => $input])
-            : $id;
+        // ONLY a genuine "that blog is gone" falls through to a create. This is
+        // the duplicate factory this migrator was fixed for once already: a
+        // refusal that reads as null makes the fallback build a second
+        // "Company News" every run, and the top-level errors folded in below
+        // used to include any message containing "does not exist".
+        if ($id !== null) {
+            return $id;
+        }
+
+        return $this->run($migration, self::CREATE_MUTATION, 'blogCreate', ['blog' => $input]);
     }
 
-    /** @return string|array|null gid, errors, or null when the target is gone */
-    private function run(StoreMigration $migration, string $mutation, string $field, array $variables): string|array|null
+    /**
+     * @return MigrationItemResult|string|array|null a verdict when Shopify refused
+     *                                               the request, else the gid,
+     *                                               the errors, or null when the
+     *                                               target blog is gone
+     */
+    private function run(StoreMigration $migration, string $mutation, string $field, array $variables): MigrationItemResult|string|array|null
     {
         $shopify = $this->shopify($migration);
         $body = $shopify->graphql($mutation, $variables);
 
-        $errors = $shopify->userErrors($body, $field);
-
-        // Surface top-level errors too (e.g. the write_content scope).
-        if (empty($errors)) {
-            $errors = $shopify->topLevelErrors($body);
+        if ($fatal = $this->fatalShopifyError($shopify, $body)) {
+            return MigrationItemResult::failed($fatal);
         }
+
+        $errors = $shopify->userErrors($body, $field);
 
         if (! empty($errors)) {
             if (isset($variables['id']) && stripos(json_encode($errors), 'does not exist') !== false) {

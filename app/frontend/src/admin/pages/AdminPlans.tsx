@@ -42,6 +42,10 @@ interface Draft {
   total: string;
   /** Arranged with us directly; not buyable through Shopify billing. */
   contactOnly: boolean;
+  /** Content features. Blank = unlimited, 0 = not included in this plan. */
+  coupons: string;
+  blogs: string;
+  reviews: string;
 }
 
 const emptyDraft: Draft = {
@@ -56,6 +60,9 @@ const emptyDraft: Draft = {
   metafields: true,
   total: "",
   contactOnly: false,
+  coupons: "",
+  blogs: "",
+  reviews: "",
 };
 
 const toDraft = (p: Plan): Draft => ({
@@ -71,6 +78,9 @@ const toDraft = (p: Plan): Draft => ({
   metafields: p.limits?.metafields !== false,
   total: capToField(p.limits?.total),
   contactOnly: p.limits?.contact_only === true,
+  coupons: capToField(p.limits?.coupons),
+  blogs: capToField(p.limits?.blogs),
+  reviews: capToField(p.limits?.reviews),
 });
 
 export default function AdminPlans() {
@@ -112,6 +122,9 @@ export default function AdminPlans() {
           metafields: draft.metafields,
           total: fieldToCap(draft.total),
           contact_only: draft.contactOnly,
+          coupons: fieldToCap(draft.coupons),
+          blogs: fieldToCap(draft.blogs),
+          reviews: fieldToCap(draft.reviews),
         },
       };
 
@@ -377,6 +390,43 @@ export default function AdminPlans() {
                 />
               </FormLayout.Group>
               <Text as="p" variant="bodySm" tone="subdued">
+                Blank = unlimited · 0 = not included in this plan
+              </Text>
+
+              <Text as="h3" variant="headingSm">
+                Content features
+              </Text>
+              {/*
+                Separate from the three above because they are not catalogue
+                volume — they are features a plan either sells or does not. They
+                never draw on the shared record budget: charging a merchant's
+                product allowance for their six blog posts would be a surprise.
+              */}
+              <FormLayout.Group>
+                <TextField
+                  label="Coupons"
+                  type="number"
+                  value={draft.coupons}
+                  onChange={(v) => set("coupons", v)}
+                  autoComplete="off"
+                />
+                <TextField
+                  label="Blogs & posts"
+                  type="number"
+                  value={draft.blogs}
+                  onChange={(v) => set("blogs", v)}
+                  helpText="Covers blogs and their posts together"
+                  autoComplete="off"
+                />
+                <TextField
+                  label="Product reviews"
+                  type="number"
+                  value={draft.reviews}
+                  onChange={(v) => set("reviews", v)}
+                  autoComplete="off"
+                />
+              </FormLayout.Group>
+              <Text as="p" tone="subdued" variant="bodySm">
                 Blank = unlimited · 0 = not included in this plan
               </Text>
 

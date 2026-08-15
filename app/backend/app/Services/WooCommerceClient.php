@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\WoocommerceConnection;
 use App\Services\Exceptions\WooCommerceUnavailableException;
+use App\Support\SafeCache;
 use App\Support\SourceHealth;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
@@ -175,7 +176,35 @@ class WooCommerceClient
                 .'This is normal on hosts with a security plugin or a caching proxy — it only makes the first minute slower.',
         );
 
-        return $this->countByProbe($resource, $query);
+        // Remembered briefly, because the probe is the one genuinely expensive
+        // read this client makes and it is made TWICE for every migration: once
+        // by the wizard's preview and again minutes later by StartMigrationJob.
+        //
+        // The preview is the dangerous one — it counts eight entities inside a
+        // single HTTP request, with no job timeout to hide behind, and on a store
+        // that hides its count headers each of those is ~2·log₂(pages) of the
+        // slowest queries on the site. That is how a large catalogue turned the
+        // wizard into a 504.
+        //
+        // Deliberately short, and deliberately ONLY the probe path: the header
+        // path is one cheap request and is always read fresh, so a store that
+        // reports its own counts is never served a stale number.
+        return (int) SafeCache::remember(
+            $this->probeCacheKey($resource, $query),
+            now()->addMinutes(5),
+            fn () => $this->countByProbe($resource, $query),
+        );
+    }
+
+    /** Keyed by store + resource + filter, never by connection row id — the
+     * candidate connection tested during setup has no id yet. */
+    private function probeCacheKey(string $resource, array $query): string
+    {
+        return 'woo:count-probe:'.sha1(implode('|', [
+            rtrim((string) $this->connection->store_url, '/'),
+            $resource,
+            json_encode($query),
+        ]));
     }
 
     /**

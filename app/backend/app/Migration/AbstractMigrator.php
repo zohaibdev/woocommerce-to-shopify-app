@@ -216,6 +216,71 @@ abstract class AbstractMigrator implements Migrator
         return $result;
     }
 
+    /**
+     * A top-level GraphQL error: Shopify refusing the REQUEST rather than
+     * objecting to the data in it.
+     *
+     * These arrive in `errors`, not in a mutation's `userErrors`, and they leave
+     * the mutation payload empty — so a migrator that reads only userErrors sees
+     * "no errors, and also no id" and records the meaningless
+     * "No id returned by Shopify". Every record in the run then fails with that
+     * same sentence, which names neither the cause nor anything the merchant can
+     * do, and the most likely cause is the most fixable one there is: the app has
+     * not been granted access to the data it is asking for.
+     *
+     * ACCESS_DENIED specifically is what a Shopify app without Protected Customer
+     * Data approval gets for customers and orders, and what a missing scope gets
+     * for anything else. It is worth saying in words.
+     *
+     * @return string|null a merchant-readable reason, or null if nothing is wrong
+     */
+    protected function fatalShopifyError(ShopifyClient $shopify, array $body): ?string
+    {
+        $errors = $shopify->topLevelErrors($body);
+
+        if (empty($errors)) {
+            return null;
+        }
+
+        $messages = [];
+        $denied = false;
+
+        foreach ($errors as $error) {
+            $messages[] = trim((string) ($error['message'] ?? 'Shopify rejected the request'));
+
+            if (($error['extensions']['code'] ?? null) === 'ACCESS_DENIED') {
+                $denied = true;
+            }
+        }
+
+        $detail = implode('; ', array_filter(array_unique($messages)));
+
+        if ($denied) {
+            return "Shopify denied access for {$this->entityType()} records ({$detail}). The app is missing an "
+                .'access scope, or — for customers and orders — Protected Customer Data approval. Reinstall the '
+                .'app to grant new scopes, and check the API access request in your Partner Dashboard.';
+        }
+
+        return "Shopify rejected the request: {$detail}";
+    }
+
+    /**
+     * A description whose own images have been copied to Shopify, when the
+     * merchant asked for that.
+     *
+     * Gallery images were always migrated; the ones pasted INSIDE a description
+     * were not, so they kept pointing at the WooCommerce server and broke the day
+     * the old store was switched off — which is the day the migration was for.
+     * Opt-in, because each new image costs an upload and a short poll; see
+     * App\Migration\DescriptionImages for how that is kept in proportion.
+     *
+     * @param  array<int, string>  $warnings  appended to when an image is left behind
+     */
+    protected function rehostDescription(StoreMigration $migration, ?string $html, array &$warnings = []): ?string
+    {
+        return app(DescriptionImages::class)->rewrite($migration, $html, $warnings);
+    }
+
     protected function woo(StoreMigration $migration): WooCommerceClient
     {
         return new WooCommerceClient($migration->connection);

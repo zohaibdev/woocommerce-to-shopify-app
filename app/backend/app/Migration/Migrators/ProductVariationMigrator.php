@@ -6,16 +6,23 @@ use App\Migration\AbstractMigrator;
 use App\Migration\MigrationItemResult;
 use App\Models\StoreMigration;
 use App\Models\WoocommerceConnection;
-use App\Services\WooCommerceClient;
 
 /**
- * Migrates variations of WooCommerce variable products into Shopify variants.
- * Depends on products (parent must exist) and attributes (option names/values).
+ * DELIBERATE NO-OP, kept only so migrations planned by an older release still
+ * resolve. It is not in the wizard and does no work.
  *
- * WooCommerce exposes variations per parent product at
- *   products/{parent_id}/variations
- * so the batching here iterates variable products. For MVP scaffolding we page
- * over products and, per variable product, migrate its variations.
+ * Variants cannot be migrated separately from their product: Shopify's
+ * productSet takes the whole product graph — options, variants, prices, SKUs,
+ * inventory, weight and media — in one call, and a variant has no meaning
+ * outside it. ProductMigrator therefore reads every variation of a variable
+ * product (allVariations(), which pages properly) and sends them with the
+ * product.
+ *
+ * count() returns 0 ON PURPOSE. It used to count variable products and plan a
+ * batch per page, each of which fetched a page from the merchant's store to
+ * then do nothing — pure load on the host that is already the bottleneck. The
+ * old TODO about summing variation counts implied unfinished work; the work
+ * exists, in ProductMigrator, where it has to be.
  */
 class ProductVariationMigrator extends AbstractMigrator
 {
@@ -31,25 +38,19 @@ class ProductVariationMigrator extends AbstractMigrator
 
     public function count(WoocommerceConnection $connection): int
     {
-        // Approximation: number of variable products. Exact variation counts are
-        // resolved during processing. TODO(phase-7): sum variation counts.
-        return (new WooCommerceClient($connection))->total('products', ['type' => 'variable']);
+        return 0;
     }
 
     public function fetchBatch(WoocommerceConnection $connection, int $page, int $perPage): array
     {
-        return (new WooCommerceClient($connection))
-            ->list('products', $page, $perPage, ['type' => 'variable']);
+        return [];
     }
 
     protected function doMigrate(StoreMigration $migration, array $wooProduct, ?string $existingShopifyId = null): MigrationItemResult
     {
-        // Variants (options, prices, SKUs, inventory, weight) are now migrated
-        // INLINE by ProductMigrator via the productSet mutation. This entity is
-        // kept for backward compatibility / explicit selection but does no work.
+        // Only reachable from a batch row planned before this became a no-op.
         $parentWooId = $this->sourceId($wooProduct);
-        $parentShopifyId = $this->shopifyIdFor($migration, 'product', $parentWooId);
 
-        return MigrationItemResult::skipped($parentShopifyId);
+        return MigrationItemResult::skipped($this->shopifyIdFor($migration, 'product', $parentWooId));
     }
 }

@@ -12,6 +12,18 @@ return [
     // queue worker the jobs still execute one after another.
     'max_concurrency' => (int) env('MIGRATION_MAX_CONCURRENCY', 8),
 
+    // Biggest serialized WooCommerce page we will park in the cache between the
+    // jobs of one batch. Caching it saves re-downloading the page on every 35s
+    // resume, which on a slow host is most of the batch's cost.
+    //
+    // Production usually runs the DATABASE cache store (shared hosting has no
+    // Redis), so this value lands in a single MySQL row and has to fit inside
+    // `max_allowed_packet`. That is 4MB on a stock MySQL and on plenty of shared
+    // hosts, 16MB+ on most managed ones — so the default is set below the lower
+    // figure rather than the higher one. A write that does not fit is not an
+    // error, it just means the page is fetched again; the run says so once.
+    'max_cached_page_bytes' => (int) env('MIGRATION_MAX_CACHED_PAGE_BYTES', 3_500_000),
+
     // --- Images ---
     // Default image size when the merchant expresses no preference.
     // One of: standard (1024px), large (1536px), full (original file).

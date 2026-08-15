@@ -10,6 +10,9 @@ class MigrationEntity extends Model
     protected $fillable = [
         'migration_id', 'entity_type', 'status',
         'total_items', 'processed_items', 'successful_items', 'failed_items',
+        // Planning progress: how many records have been pinned to a chunk so
+        // far, and the highest WooCommerce id among them. See PlanBatchesJob.
+        'planned_items', 'last_source_id',
     ];
 
     protected $appends = ['percentage'];

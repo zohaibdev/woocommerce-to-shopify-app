@@ -95,6 +95,15 @@ class MigrationRunner
         $next = self::nextBatch($migrationId);
 
         if (! $next) {
+            // "No outstanding chunks" only means the run is over once every chunk
+            // has been CREATED. Planning now runs alongside the migration (see
+            // PlanBatchesJob), so a run whose first entity finished before the
+            // second was planned would otherwise close itself as completed with
+            // most of the catalogue never even listed.
+            if ($migration->planned_at === null) {
+                return;
+            }
+
             FinalizeMigrationJob::dispatch($migrationId);
 
             return;

@@ -90,6 +90,22 @@ export interface QueueHealth {
   failed_jobs: number;
   oldest_pending_seconds: number | null;
   worker_stalled: boolean;
+  /**
+   * Whether this server lets the app start its own worker. When false the host
+   * has disabled proc_open and a cron really is the only answer — so the panel
+   * must say that instead of offering a button that cannot work.
+   */
+  can_self_start: boolean;
+  auto_worker_enabled: boolean;
+}
+
+export interface QueueActionResult {
+  message: string;
+  can_self_start?: boolean;
+  started?: boolean;
+  retried?: number;
+  pending_jobs?: number;
+  failed_jobs?: number;
 }
 
 export interface Overview {
@@ -101,6 +117,26 @@ export interface Overview {
   failed_items: number;
   open_tickets: number;
   active_subscriptions: number;
+}
+
+/** What one shop currently holds for one entity type — what a reset acts on. */
+export interface StoreEntityRow {
+  type: string;
+  total: number;
+  success: number;
+  failed: number;
+  skipped: number;
+  pending: number;
+}
+
+export type EntityResetMode = "resync" | "forget";
+
+export interface EntityResetResult {
+  entity_type: string;
+  mode: EntityResetMode;
+  affected: number;
+  entities: StoreEntityRow[];
+  message: string;
 }
 
 export interface AdminStore {
@@ -191,6 +227,14 @@ export interface PlanLimits {
   total?: number | null;
   /** Negotiated off-platform — not buyable through Shopify billing. */
   contact_only?: boolean;
+  /**
+   * Content features, each metered on its own. null/absent = unlimited,
+   * 0 = not included in this plan. `blogs` covers blogs AND their posts —
+   * one feature to a merchant, so one number here.
+   */
+  coupons?: number | null;
+  blogs?: number | null;
+  reviews?: number | null;
 }
 
 export interface Plan {
@@ -216,11 +260,30 @@ export const adminApi = {
 
   overview: () => request<Overview>("/overview"),
 
+  /** Start a background worker without an SSH session. */
+  runQueue: () => request<QueueActionResult>("/queue/run", { method: "POST" }),
+
+  /** Put abandoned jobs back on the queue. */
+  retryFailedJobs: () =>
+    request<QueueActionResult>("/queue/retry-failed", { method: "POST" }),
+
   stores: (page = 1, search = "") =>
     request<{ data: AdminStore[]; meta: PageMeta }>(
       `/stores?page=${page}&search=${encodeURIComponent(search)}`,
     ),
   store: (id: number) => request<any>(`/stores/${id}`),
+
+  // Support tool: let one entity type be migrated again for one store.
+  //
+  // `resync` keeps the mapping rows in the state that makes a re-run ADOPT
+  // whatever is already in Shopify; `forget` deletes them, so a re-run creates
+  // everything again. The difference is duplicates, which is why the caller has
+  // to name the mode rather than get a default it did not think about.
+  resetStoreEntity: (id: number, entityType: string, mode: EntityResetMode) =>
+    request<EntityResetResult>(`/stores/${id}/reset-entity`, {
+      method: "POST",
+      body: JSON.stringify({ entity_type: entityType, mode }),
+    }),
   plans: () => request<{ data: Plan[] }>("/plans"),
   createPlan: (data: Partial<Plan>) =>
     request<Plan>("/plans", { method: "POST", body: JSON.stringify(data) }),

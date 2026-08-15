@@ -18,6 +18,7 @@ import {
 } from "@shopify/polaris";
 import { useNavigate } from "react-router-dom";
 import { api, type EntityCount, type PlanPool } from "../api/client";
+import { formatDuration } from "../duration";
 import { loadSettings } from "../settings";
 
 // Variants, options and images are migrated INLINE with each product, so they
@@ -35,7 +36,6 @@ const ENTITY_OPTIONS = [
   { label: "Coupons", value: "coupon", detail: "Become Shopify discount codes" },
   { label: "Blogs", value: "blog", detail: "Your post categories become Shopify blogs" },
   { label: "Blog posts", value: "article", detail: "Posts with their original publish dates and images" },
-  { label: "Pages", value: "page", detail: "About, Shipping, Returns and any other published page" },
   {
     label: "Product reviews",
     value: "review",
@@ -93,6 +93,7 @@ export default function NewMigration() {
   const [defaultVendor, setDefaultVendor] = useState(prefs.defaultVendor);
   const [weightUnit, setWeightUnit] = useState(prefs.weightUnit);
   const [imageSize, setImageSize] = useState(prefs.imageSize);
+  const [rehostImages, setRehostImages] = useState(false);
   const [counts, setCounts] = useState<EntityCount[]>([]);
   const [planName, setPlanName] = useState<string | null>(null);
   const [pool, setPool] = useState<PlanPool | null>(null);
@@ -150,16 +151,42 @@ export default function NewMigration() {
 
   // Orders reference customers, so pull customers in automatically — but never
   // add an entity the plan blocks.
+  // Dependencies the backend also enforces (MigrationController::IMPLIED_ENTITIES).
+  // Mirrored here so the merchant SEES what will run before they start, instead of
+  // the server quietly adding entities the summary never mentioned.
+  //
+  // blog -> article is the one that is not a hard dependency but is always what
+  // the merchant means: picking "Blogs" on its own creates empty blogs in Shopify
+  // with none of the posts in them, which reads as the feature being broken.
+  const IMPLIED: Record<string, string> = {
+    order: "customer",
+    review: "product",
+    article: "blog",
+    blog: "article",
+  };
+
   const enforceDeps = (values: string[]) => {
     const next = [...values];
-    if (next.includes("order") && !next.includes("customer") && isSelectable(gate("customer"))) {
-      next.push("customer");
+
+    for (const [selected, required] of Object.entries(IMPLIED)) {
+      if (next.includes(selected) && !next.includes(required) && isSelectable(gate(required))) {
+        next.push(required);
+      }
     }
+
     setSelected(next);
   };
 
   const migratableFor = (type: string) => gate(type)?.migratable ?? 0;
   const estimated = selected.reduce((sum, t) => sum + migratableFor(t), 0);
+
+  // Summed from only what the merchant ticked, rather than the preview's
+  // all-entities figure — a summary that quotes a time for entities they left
+  // out is worse than no time at all.
+  const estimatedSeconds = selected.reduce(
+    (sum, t) => sum + (gate(t)?.estimated_seconds ?? 0),
+    0,
+  );
 
   const blockedByPlan = ENTITY_OPTIONS.filter((o) => isBlockedByPlan(gate(o.value)));
 
@@ -180,7 +207,23 @@ export default function NewMigration() {
       return `Not included in your ${planName ?? "current"} plan — upgrade to migrate ${available}`;
     }
     if (entity.count === 0) {
-      return `None found in WooCommerce — ${option.detail}`;
+      // Blogs, blog posts and reviews come from endpoints many WordPress hosts
+      // hide behind a security plugin. "None found" then reads as "you have
+      // none", which sends the merchant looking for the wrong problem.
+      return unavailable.includes(option.value)
+        ? "Your host is not exposing this WordPress endpoint, so it can't be read"
+        : `None found in WooCommerce — ${option.detail}`;
+    }
+    // Re-running after a partial or failed run is the common case, and a merchant
+    // who cannot see what already landed assumes they are paying for it twice.
+    // They are not: the plan counts DISTINCT records, so anything already
+    // migrated is free to migrate again.
+    if (entity.used > 0) {
+      const already = `${entity.used.toLocaleString()} already migrated (re-running these is free)`;
+
+      return entity.migratable < entity.count
+        ? `${already} · ${entity.migratable.toLocaleString()} of ${available} will migrate on your ${planName ?? "current"} plan`
+        : `${already} · ${available} available`;
     }
     // A pooled entity's number is decided by the shared budget and by what the
     // other entities took first, which this row cannot explain on its own — so
@@ -226,6 +269,7 @@ export default function NewMigration() {
         name: name.trim(),
         weightUnit,
         imageSize,
+        rehostDescriptionImages: rehostImages,
         notifyEmail: notifyMe ? notifyEmail.trim() : "",
       });
       navigate(`/migrations/${migration.id}`);
@@ -424,6 +468,14 @@ export default function NewMigration() {
                   </Banner>
                 )}
               </BlockStack>
+
+              <Checkbox
+                label="Also copy images inside descriptions to Shopify"
+                checked={rehostImages}
+                onChange={setRehostImages}
+                helpText="Product and blog descriptions often contain their own images — size charts, close-ups — which stay hosted on your WooCommerce store. Turn this on to copy them to Shopify as well, so they keep working after you take the old store offline. It makes the migration slower, and you only need it if you plan to shut WooCommerce down."
+              />
+
               <TextField
                 label="Custom tags (optional)"
                 value={customTags}
@@ -518,6 +570,23 @@ export default function NewMigration() {
                   {estimated.toLocaleString()}
                 </Text>
               </InlineStack>
+              <InlineStack align="space-between">
+                <Text as="span" fontWeight="bold">
+                  Estimated time
+                </Text>
+                <Text as="span" fontWeight="bold">
+                  {estimatedSeconds > 0 ? formatDuration(estimatedSeconds) : "—"}
+                </Text>
+              </InlineStack>
+              {estimatedSeconds > 0 && (
+                <Text as="p" tone="subdued" variant="bodySm">
+                  A rough figure based on how many records you have. Most of the time goes on
+                  Shopify downloading your images, so a store with large photos takes longer —
+                  choosing a smaller image size above is the quickest way to speed this up. Once the
+                  migration starts you&rsquo;ll see a live estimate from its actual pace. You can
+                  close this page at any time; the migration keeps running.
+                </Text>
+              )}
               <InlineStack align="space-between">
                 <Button onClick={() => setStep(1)}>Back</Button>
                 <Button variant="primary" loading={starting} onClick={start}>

@@ -61,10 +61,14 @@ class PlanPool
             return new self(null, [], null);
         }
 
+        // Scoped to the current billing period for the same reason as
+        // PlanAllowance: a shared budget that never came back made every renewal
+        // after the first one a charge for nothing.
         $used = MigrationItem::query()
             ->where('shop_id', $shop->id)
             ->whereIn('entity_type', self::METERED)
             ->where('status', 'success')
+            ->where('created_at', '>=', BillingPeriod::currentStart($shop))
             ->selectRaw('entity_type, count(*) as aggregate')
             ->groupBy('entity_type')
             ->pluck('aggregate', 'entity_type')

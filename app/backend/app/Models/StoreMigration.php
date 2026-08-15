@@ -12,13 +12,14 @@ class StoreMigration extends Model
 
     protected $fillable = [
         'shop_id', 'name', 'woocommerce_connection_id', 'status',
-        'selected_entities', 'options', 'started_at', 'completed_at',
+        'selected_entities', 'options', 'started_at', 'planned_at', 'completed_at',
     ];
 
     protected $casts = [
         'selected_entities' => 'array',
         'options' => 'array',
         'started_at' => 'datetime',
+        'planned_at' => 'datetime',
         'completed_at' => 'datetime',
     ];
 

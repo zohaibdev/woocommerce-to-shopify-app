@@ -36,10 +36,20 @@ class PlanAllowance
         // null = unlimited, 0 = the plan doesn't include this entity at all.
         $limit = $shop->limitFor($entityType);
 
+        // Counted over the CURRENT BILLING PERIOD, not all time. Measuring it
+        // over all time made a recurring subscription behave like a one-off
+        // purchase — spend the allowance once and every later invoice bought
+        // nothing. See App\Support\BillingPeriod.
+        //
+        // `created_at` deliberately, not `updated_at`: a record migrated in an
+        // earlier period and re-migrated now had its row UPDATED, not created,
+        // so re-running to refresh existing data stays free exactly as before.
+        // The allowance is for records this shop has not migrated yet.
         $used = MigrationItem::query()
             ->where('shop_id', $shop->id)
             ->where('entity_type', $entityType)
             ->where('status', 'success')
+            ->where('created_at', '>=', BillingPeriod::currentStart($shop))
             ->count();
 
         $remaining = $limit === null ? null : max(0, $limit - $used);
@@ -71,6 +81,12 @@ class PlanAllowance
 
         $planName = $shop->currentPlan()?->name ?? 'current';
 
+        // "You've used it all" is a dead end; "you've used it all, it comes back
+        // on the 12th" is a plan. An exhausted merchant with no date in front of
+        // them has no reason to believe waiting will help, so they either
+        // upgrade for the wrong reason or leave.
+        $resetsOn = BillingPeriod::nextReset($shop)->format('j M');
+
         return [
             'limit' => $limit,
             'used' => $used,
@@ -85,11 +101,11 @@ class PlanAllowance
             'reason' => match (true) {
                 $locked => "Not included in the {$planName} plan.",
                 $pooled && $exhausted => "You've used all ".number_format((int) $pool->limit)
-                    ." records in your {$planName} plan allowance.",
+                    ." records in this month's {$planName} allowance — it resets on {$resetsOn}.",
                 $poolCapped => "Your {$planName} plan covers ".number_format((int) $pool->limit)
                     .' records in total — '.number_format($migratable).' of '
                     .number_format($available)." {$entityType} records fit in what is left.",
-                $exhausted => "You've used all {$limit} of your {$planName} plan allowance.",
+                $exhausted => "You've used all {$limit} of this month's {$planName} allowance — it resets on {$resetsOn}.",
                 $limit !== null && $available > $limit => "Your {$planName} plan covers {$limit} of {$available}.",
                 default => null,
             },

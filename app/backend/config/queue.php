@@ -71,7 +71,14 @@ return [
             'driver' => 'redis',
             'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
             'queue' => env('REDIS_QUEUE', 'default'),
-            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 90),
+            // 900 for exactly the same reason the database connection uses it,
+            // and this default is the one that matters most: moving to Redis is
+            // something you do to go FASTER, and Laravel's stock 90 here would
+            // have silently reintroduced the worst bug this engine ever had —
+            // the queue declaring a running ProcessBatchJob dead mid-batch and
+            // starting a second copy of it on the same page. Every job's own
+            // timeout must stay below this.
+            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 900),
             'block_for' => null,
             'after_commit' => false,
         ],
@@ -128,5 +135,50 @@ return [
         'database' => env('DB_CONNECTION', 'sqlite'),
         'table' => 'failed_jobs',
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Self-starting worker
+    |--------------------------------------------------------------------------
+    |
+    | When true, ordinary API traffic starts a detached `queue:work` if there is
+    | queued work and nothing is consuming it — see App\Support\QueueKeeper. It
+    | is a safety net for hosting with no cron and no supervisor, not a
+    | replacement for either: a real worker still gives far better throughput.
+    |
+    | Turn it OFF wherever you run supervisor or Horizon, so the two do not
+    | compete for the same jobs.
+    |
+    */
+
+    'auto_worker' => (bool) env('QUEUE_AUTO_WORKER', true),
+
+    /*
+    | How many self-started workers may run at once.
+    |
+    | This used to be hard-wired to one, which made the engine's concurrency
+    | design decorative: MigrationRunner derives from the shop's real Shopify
+    | budget that it may run up to eight batches in parallel and dispatches that
+    | many jobs — and a single worker then ran them one after another. On a large
+    | catalogue that is the whole difference between an overnight migration and
+    | an afternoon one.
+    |
+    | Two is a deliberately careful default for shared hosting, where PHP
+    | processes and memory are metered. Raise it on a VPS — or better, turn
+    | auto_worker off entirely and let supervisor run the pool (see
+    | deploy/supervisor/store-shift-worker.conf), which restarts a dead worker
+    | immediately instead of on the next poll.
+    */
+
+    'auto_workers' => (int) env('QUEUE_AUTO_WORKERS', 2),
+
+    /*
+    | Failed jobs are re-queued automatically by `migration:watchdog`, up to this
+    | many times each sweep. Bounded so a genuinely poisonous job cannot be
+    | retried forever — past this it stays failed and is reported in the admin
+    | panel, which is where a human should look at it.
+    */
+
+    'auto_retry_failed' => (int) env('QUEUE_AUTO_RETRY_FAILED', 25),
 
 ];

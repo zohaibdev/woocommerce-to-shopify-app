@@ -16,6 +16,13 @@ return Application::configure(basePath: dirname(__DIR__))
             'shopify.session' => \App\Http\Middleware\AuthenticateSessionToken::class,
             'admin.auth' => \App\Http\Middleware\AuthenticateAdmin::class,
         ]);
+
+        // Appended to the API group so ordinary polling traffic keeps the queue
+        // moving on hosting with no persistent worker. It does its work in
+        // terminate(), after the response — see KeepQueueAlive.
+        $middleware->api(append: [
+            \App\Http\Middleware\KeepQueueAlive::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

@@ -97,14 +97,19 @@ class OrderMigrator extends AbstractMigrator
                 $shopify = $this->shopify($migration);
                 $body = $shopify->graphql(self::CREATE_MUTATION, ['order' => $attempt, 'options' => $options]);
 
-                $errors = $shopify->userErrors($body, 'orderCreate');
-
-                // Surface top-level errors too (e.g. missing write_orders scope).
-                if (empty($errors)) {
-                    $errors = $shopify->topLevelErrors($body);
+                // Shopify refusing the REQUEST — no write_orders scope, or (far
+                // more likely here) Protected Customer Data not yet approved,
+                // which denies orders outright. Folding that into the ordinary
+                // errors array sent it round the shedding loop, so one refusal
+                // cost four API calls per order and arrived as raw JSON.
+                if ($fatal = $this->fatalShopifyError($shopify, $body)) {
+                    return MigrationItemResult::failed($fatal);
                 }
 
-                return [data_get($body, 'data.orderCreate.order.id'), $errors];
+                return [
+                    data_get($body, 'data.orderCreate.order.id'),
+                    $shopify->userErrors($body, 'orderCreate'),
+                ];
             },
             $order,
             ['transactions', 'shippingAddress', 'billingAddress', 'shippingLines', 'tags', 'note', 'processedAt', 'discountCode'],
@@ -155,7 +160,7 @@ class OrderMigrator extends AbstractMigrator
     {
         return collect($woo['line_items'] ?? [])->map(function ($li) use ($currency) {
             $qty = max(1, (int) ($li['quantity'] ?? 1));
-            $unit = $li['price'] ?? (($li['total'] ?? 0) / $qty);
+            $unit = $this->unitPrice($li, $qty);
 
             return array_filter([
                 // The SKU is deliberately NOT sent. Shopify treats it as a product
@@ -170,6 +175,31 @@ class OrderMigrator extends AbstractMigrator
                 'taxLines' => $this->lineTaxes($li, $currency),
             ], fn ($v) => $v !== null && $v !== []);
         })->values()->all();
+    }
+
+    /**
+     * The PRE-DISCOUNT unit price of one line.
+     *
+     * This has to be the pre-discount figure, because the coupon is sent
+     * separately as `discountCode` and Shopify subtracts it itself. WooCommerce's
+     * `price` and `total` are both POST-discount — `subtotal` is the only field
+     * that still holds what the line cost before the coupon touched it — so using
+     * `price` here took the discount off twice and every migrated order with a
+     * coupon on it totalled LESS than the customer actually paid.
+     *
+     * The fallbacks matter as much as the primary: a line with no `subtotal` (an
+     * old order, a plugin-written line) must not silently fall through to a
+     * double discount, so `price` is the last resort rather than the first.
+     */
+    private function unitPrice(array $li, int $qty): float
+    {
+        foreach (['subtotal', 'total'] as $key) {
+            if (isset($li[$key]) && is_numeric($li[$key])) {
+                return (float) $li[$key] / $qty;
+            }
+        }
+
+        return (float) ($li['price'] ?? 0);
     }
 
     /**

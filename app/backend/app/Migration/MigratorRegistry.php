@@ -11,7 +11,6 @@ use App\Migration\Migrators\CouponMigrator;
 use App\Migration\Migrators\CustomerMigrator;
 use App\Migration\Migrators\MediaMigrator;
 use App\Migration\Migrators\OrderMigrator;
-use App\Migration\Migrators\PageMigrator;
 use App\Migration\Migrators\ProductMigrator;
 use App\Migration\Migrators\ProductVariationMigrator;
 use App\Migration\Migrators\ReviewMigrator;
@@ -31,7 +30,6 @@ class MigratorRegistry
         'coupon' => CouponMigrator::class,
         'blog' => BlogMigrator::class,
         'article' => ArticleMigrator::class,
-        'page' => PageMigrator::class,
         'review' => ReviewMigrator::class,
     ];
 

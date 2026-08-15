@@ -84,6 +84,14 @@ class AdminPlanController extends Controller
             'limits.total' => ['sometimes', 'nullable', 'integer', 'min:0'],
             // Negotiated off-platform; not buyable through Shopify billing.
             'limits.contact_only' => ['sometimes', 'boolean'],
+            // Content features, each sellable on its own. null = unlimited,
+            // 0 = not in this plan (the wizard then disables and explains it).
+            // `blogs` covers blogs AND their posts: they are one feature to a
+            // merchant, and a plan that sold blogs without posts would deliver
+            // empty containers.
+            'limits.coupons' => ['sometimes', 'nullable', 'integer', 'min:0'],
+            'limits.blogs' => ['sometimes', 'nullable', 'integer', 'min:0'],
+            'limits.reviews' => ['sometimes', 'nullable', 'integer', 'min:0'],
         ]);
 
         // The defaults below are what an UNSPECIFIED key means, so every key the
@@ -100,6 +108,9 @@ class AdminPlanController extends Controller
                 'metafields' => true,
                 'total' => null,
                 'contact_only' => false,
+                'coupons' => null,
+                'blogs' => null,
+                'reviews' => null,
             ],
             $request->input('limits', []),
         );

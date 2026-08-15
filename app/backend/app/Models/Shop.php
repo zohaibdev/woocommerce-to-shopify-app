@@ -76,11 +76,37 @@ class Shop extends Model
      * The shop's effective plan. Every shop always has one — with no paid
      * subscription they fall back to the free Starter plan.
      */
+    /**
+     * Memoised for the life of this model instance.
+     *
+     * This is two queries, and it is now consulted PER RECORD — planAllows() runs
+     * on every product to decide whether the plan includes metafields. Unmemoised
+     * that is two extra queries per product, which on a 50,000-product catalogue
+     * is 100,000 queries buying nothing: a shop's plan cannot change part-way
+     * through a batch, and a fresh worker gets a fresh instance anyway.
+     */
+    private ?Plan $planCache = null;
+
+    private bool $planResolved = false;
+
     public function currentPlan(): ?Plan
     {
+        if ($this->planResolved) {
+            return $this->planCache;
+        }
+
         $subscribed = $this->activeSubscription()->with('plan')->first()?->plan;
 
-        return $subscribed ?: Plan::where('code', 'starter')->first();
+        $this->planResolved = true;
+
+        return $this->planCache = $subscribed ?: Plan::where('code', 'starter')->first();
+    }
+
+    /** Drop the memoised plan — for tests and for code that changes a subscription. */
+    public function forgetPlan(): void
+    {
+        $this->planResolved = false;
+        $this->planCache = null;
     }
 
     /**
@@ -93,6 +119,12 @@ class Shop extends Model
             'product', 'variation', 'media' => 'products',
             'customer' => 'customers',
             'order' => 'orders',
+            'coupon' => 'coupons',
+            // Blogs and their posts are ONE feature to a merchant and one key
+            // here. Metering them apart would let a plan sell blogs that must
+            // arrive empty, which is not a product anybody wants.
+            'blog', 'article' => 'blogs',
+            'review' => 'reviews',
             default => null,
         };
 

@@ -173,6 +173,16 @@ export default function Pricing() {
                     )}
                     <Feature ok>Collections, variants &amp; images</Feature>
                     <Feature ok={p.limits.metafields !== false}>Metafields &amp; brands</Feature>
+                    {/*
+                      Content features are metered on their own — never out of the
+                      record budget above. A 0 renders as an unticked line rather
+                      than being hidden, because "this plan does not include
+                      discount codes" is exactly what a merchant comparing plans
+                      needs to see BEFORE they pick one.
+                    */}
+                    <Feature ok={p.limits.coupons !== 0}>Coupons &rarr; discount codes</Feature>
+                    <Feature ok={p.limits.blogs !== 0}>Blogs &amp; blog posts</Feature>
+                    <Feature ok={p.limits.reviews !== 0}>Product reviews</Feature>
                   </BlockStack>
 
                   <Box paddingBlockStart="200">

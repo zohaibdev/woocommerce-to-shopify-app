@@ -6,7 +6,6 @@ use App\Migration\MigratorRegistry;
 use App\Migration\Migrators\ArticleMigrator;
 use App\Migration\Migrators\BlogMigrator;
 use App\Migration\Migrators\CouponMigrator;
-use App\Migration\Migrators\PageMigrator;
 use App\Migration\Migrators\ReviewMigrator;
 use App\Models\MigrationItem;
 use App\Models\Shop;
@@ -18,7 +17,7 @@ use Tests\TestCase;
 
 /**
  * The five entities a WooCommerce store has that the migration used to leave
- * behind entirely: coupons, blogs, blog posts, pages and product reviews.
+ * behind entirely: coupons, blogs, blog posts and product reviews.
  *
  * Two of them do not map cleanly and the tests say so explicitly — a Woo coupon
  * carries restrictions Shopify cannot express, and Shopify has no product
@@ -49,7 +48,7 @@ class ContentMigratorsTest extends TestCase
             'shop_id' => $shop->id,
             'woocommerce_connection_id' => $conn->id,
             'status' => 'processing',
-            'selected_entities' => ['page'],
+            'selected_entities' => ['blog'],
         ]);
 
         $migration->setRelation('shop', $shop);
@@ -96,7 +95,7 @@ class ContentMigratorsTest extends TestCase
     {
         $registry = app(MigratorRegistry::class);
 
-        foreach (['coupon', 'blog', 'article', 'page', 'review'] as $type) {
+        foreach (['coupon', 'blog', 'article', 'review'] as $type) {
             $this->assertTrue($registry->has($type), "{$type} must be selectable");
         }
 
@@ -179,33 +178,6 @@ class ContentMigratorsTest extends TestCase
 
         $this->assertSame('failed', $result->status);
         $this->assertStringContainsString('signup_credit', $result->error);
-    }
-
-    // --------------------------------------------------------------------- pages
-
-    /** @test */
-    public function a_wordpress_page_keeps_its_slug_date_and_seo(): void
-    {
-        $captured = null;
-        $this->capture($captured, 'pageCreate', 'page');
-
-        (new PageMigrator())->migrateItem($this->migration(), [
-            'id' => 10,
-            'slug' => 'shipping-returns',
-            'title' => ['rendered' => 'Shipping &amp; Returns'],
-            'content' => ['rendered' => '<p>We ship worldwide.</p>'],
-            'date_gmt' => '2019-04-02T09:30:00',
-            'meta_data' => [['key' => '_yoast_wpseo_title', 'value' => 'Shipping and Returns Policy']],
-        ]);
-
-        $page = $captured['page'];
-
-        $this->assertSame('shipping-returns', $page['handle']);
-        $this->assertStringContainsString('2019-04-02', $page['publishDate']);
-        // Shopify has no `seo` field on a page — themes read these metafields.
-        $this->assertSame('global', $page['metafields'][0]['namespace']);
-        $this->assertSame('title_tag', $page['metafields'][0]['key']);
-        $this->assertSame('Shipping and Returns Policy', $page['metafields'][0]['value']);
     }
 
     // --------------------------------------------------------------------- blogs
@@ -312,6 +284,63 @@ class ContentMigratorsTest extends TestCase
         // An archive that reads as written today is the most obvious sign of a
         // careless migration there is.
         $this->assertStringContainsString('2021-07-15', $article['publishDate']);
+    }
+
+    /** @test */
+    public function posts_are_read_with_their_featured_image_embedded(): void
+    {
+        $urls = [];
+
+        Http::fake(function ($request) use (&$urls) {
+            $urls[] = $request->url();
+
+            return Http::response([], 200);
+        });
+
+        $conn = $this->migration()->connection;
+
+        (new ArticleMigrator())->fetchBatch($conn, 1, 10);
+
+        // A plain wp/v2/posts response carries `featured_media` as a bare
+        // ATTACHMENT ID, never a URL — so without asking WordPress to embed the
+        // media, image() had nothing to read and EVERY migrated post arrived with
+        // no featured image. Silently, because a post without one is still valid.
+        $this->assertStringContainsString('_embed=wp', urldecode($urls[0]));
+    }
+
+    /** @test */
+    public function an_embedded_featured_image_reaches_shopify(): void
+    {
+        $migration = $this->migration();
+
+        MigrationItem::create([
+            'migration_id' => $migration->id,
+            'shop_id' => $migration->shop_id,
+            'entity_type' => 'blog',
+            'woocommerce_id' => 20,
+            'shopify_id' => 'gid://shopify/Blog/500',
+            'status' => 'success',
+        ]);
+
+        $captured = null;
+        $this->capture($captured, 'articleCreate', 'article');
+
+        (new ArticleMigrator())->migrateItem($migration, [
+            'id' => 31,
+            'title' => ['rendered' => 'With A Picture'],
+            'content' => ['rendered' => '<p>Look.</p>'],
+            'categories' => [20],
+            '_embedded' => ['wp:featuredmedia' => [[
+                'source_url' => 'https://woo.example.com/wp-content/uploads/hero.jpg',
+                'alt_text' => 'The new warehouse',
+            ]]],
+        ]);
+
+        $this->assertSame(
+            'https://woo.example.com/wp-content/uploads/hero.jpg',
+            $captured['article']['image']['url'],
+        );
+        $this->assertSame('The new warehouse', $captured['article']['image']['altText']);
     }
 
     /** @test */
@@ -454,7 +483,7 @@ class ContentMigratorsTest extends TestCase
     }
 
     /** @test */
-    public function a_review_whose_product_never_migrated_fails_with_a_usable_reason(): void
+    public function a_review_whose_product_never_migrated_is_skipped_not_failed(): void
     {
         Http::fake();
 
@@ -463,9 +492,18 @@ class ContentMigratorsTest extends TestCase
             'product_id' => 999,
         ]);
 
-        $this->assertSame('failed', $result->status);
-        $this->assertStringContainsString('was not migrated', $result->error);
-        $this->assertStringContainsString('Include Products', $result->error);
+        // SKIPPED is the honest status here. Reviews are unmetered while products
+        // stop at the plan cap, so on a free plan every review of product 11
+        // upwards reaches this branch — as normal operation, not as a fault.
+        // Recording them as failures turned an ordinary run into
+        // "completed_with_errors" behind hundreds of red rows the merchant could
+        // do nothing about, and hid the failures that were real.
+        $this->assertSame('skipped', $result->status);
+        $this->assertNull($result->error);
+
+        // It still has to say WHY, or the record is a silent hole.
+        $this->assertStringContainsString('#999', $result->warning);
+        $this->assertStringContainsString('upgrade', $result->warning);
     }
 
     /** @test */

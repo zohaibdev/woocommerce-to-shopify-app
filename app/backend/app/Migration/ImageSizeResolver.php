@@ -83,6 +83,22 @@ class ImageSizeResolver
                 $found = true;
             }
 
+            // Record every id we ASKED about, not just the ones that answered
+            // usefully. An id with no generated sizes — an SVG, an externally
+            // hosted image, an attachment whose metadata WordPress lost — used to
+            // be left out of the table entirely, so the array_diff above put it
+            // straight back into the next request. prefetchVariationImages() runs
+            // once per product, which turned that into one wasted wp/v2/media call
+            // for every variable product in the catalogue: twenty thousand extra
+            // requests against the merchant's own host on a 20k run, all of them
+            // asking a question that had already been answered "no".
+            //
+            // An empty entry means "asked, nothing better available", and url()
+            // already reads that as "send the original".
+            foreach ($chunk as $id) {
+                $this->sizesById[(int) $id] ??= [];
+            }
+
             foreach ($media as $id => $item) {
                 $sizes = [];
 

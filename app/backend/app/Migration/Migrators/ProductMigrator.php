@@ -215,7 +215,10 @@ class ProductMigrator extends AbstractMigrator
             // breaks every inbound link and every redirect the merchant sets up
             // against their old URLs.
             'handle' => $this->handleFromSlug($woo['slug'] ?? null),
-            'descriptionHtml' => $woo['description'] ?? '',
+            // The images inside the description are re-hosted on Shopify when the
+            // merchant asked for it, so the description survives the WooCommerce
+            // store being switched off.
+            'descriptionHtml' => $this->rehostDescription($migration, $woo['description'] ?? '', $warnings),
             'vendor' => $this->vendor($migration, $woo),
             'productType' => data_get($woo, 'categories.0.name') ?: null,
             'status' => $this->status($woo['status'] ?? 'publish'),
@@ -265,11 +268,21 @@ class ProductMigrator extends AbstractMigrator
 
                 $result = $this->runSet($migration, $attempt);
 
+                // Shopify refused the request itself (scope, token, outage) —
+                // final answer, and shedding fields cannot change it.
+                if ($result instanceof MigrationItemResult) {
+                    return $result;
+                }
+
                 // Self-heal: the product we tried to update no longer exists
                 // (deleted in Shopify), so recreate it fresh.
                 if ($result === null && $existingShopifyId) {
                     unset($attempt['id']);
                     $result = $this->runSet($migration, $attempt);
+
+                    if ($result instanceof MigrationItemResult) {
+                        return $result;
+                    }
                 }
 
                 return is_array($result) ? [null, $result] : [$result, []];
@@ -364,13 +377,24 @@ class ProductMigrator extends AbstractMigrator
 
     /**
      * Runs productSet. Returns the new product gid on success, an errors array on
-     * a "real" failure, or null when the update targeted a non-existent product
-     * (signal to the caller to retry as a create).
+     * a "real" failure, null when the update targeted a non-existent product
+     * (signal to the caller to retry as a create), or a finished failure result
+     * when Shopify refused the request outright.
      */
-    private function runSet(StoreMigration $migration, array $input): string|array|null
+    private function runSet(StoreMigration $migration, array $input): MigrationItemResult|string|array|null
     {
-        $body = $this->shopify($migration)->graphql(self::SET_MUTATION, ['input' => $input]);
-        $errors = $this->shopify($migration)->userErrors($body, 'productSet');
+        $shopify = $this->shopify($migration);
+        $body = $shopify->graphql(self::SET_MUTATION, ['input' => $input]);
+
+        // A missing scope or a Shopify-side refusal arrives in `errors`, not in
+        // productSet's `userErrors`, and leaves the payload empty. Read only the
+        // userErrors and every record in the run failed with "No id returned by
+        // Shopify" — a sentence that names neither the cause nor the fix.
+        if ($fatal = $this->fatalShopifyError($shopify, $body)) {
+            return MigrationItemResult::failed($fatal);
+        }
+
+        $errors = $shopify->userErrors($body, 'productSet');
 
         if (! empty($errors)) {
             $text = json_encode($errors);
@@ -716,9 +740,32 @@ class ProductMigrator extends AbstractMigrator
     private function tags(StoreMigration $migration, array $woo): array
     {
         $wooTags = collect($woo['tags'] ?? [])->pluck('name')->all();
-        $brandTags = config('migration.brands_as_tags', true) ? $this->brandNames($woo) : [];
+
+        $brandTags = config('migration.brands_as_tags', true) && $this->metafieldsAllowed($migration)
+            ? $this->brandNames($woo)
+            : [];
 
         return array_values(array_unique(array_merge($wooTags, $brandTags, $migration->customTags())));
+    }
+
+    /**
+     * Does this shop's plan include metafields and brands?
+     *
+     * Every plan has carried a `metafields` flag since billing was built, the
+     * pricing page has always shown "Metafields & brands" as a paid line, and
+     * Shop::planAllows() was written to answer exactly this — but NOTHING ever
+     * called it. So the free Starter plan shipped every merchant's full custom
+     * meta_data and brand data, and the one feature the paid tiers were sold on
+     * was given away. This is the call that was missing.
+     *
+     * Memoised per migration: it is asked once per product, and the answer cannot
+     * change part-way through a run.
+     */
+    private ?bool $metafieldsAllowed = null;
+
+    private function metafieldsAllowed(StoreMigration $migration): bool
+    {
+        return $this->metafieldsAllowed ??= $migration->shop->planAllows('metafields');
     }
 
     private function brandNames(array $woo): array
@@ -749,6 +796,13 @@ class ProductMigrator extends AbstractMigrator
      */
     private function metafields(StoreMigration $migration, array $woo): array
     {
+        // Not in this plan. Returning early also skips ensureDefinitions(), which
+        // would otherwise write metafield DEFINITIONS into the merchant's Shopify
+        // admin for data the run is not going to send.
+        if (! $this->metafieldsAllowed($migration)) {
+            return [];
+        }
+
         $mapper = new MetafieldMapper();
 
         $metafields = $mapper->fromMetaData($migration->shop_id, $woo['meta_data'] ?? []);

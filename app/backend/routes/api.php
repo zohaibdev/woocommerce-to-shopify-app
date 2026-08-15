@@ -83,10 +83,15 @@ Route::prefix('admin')->group(function () {
         Route::post('/logout', [AdminAuthController::class, 'logout']);
 
         Route::get('/overview', [AdminStoreController::class, 'overview']);
+        // One click instead of an SSH session — see AdminStoreController.
+        Route::post('/queue/run', [AdminStoreController::class, 'runQueue']);
+        Route::post('/queue/retry-failed', [AdminStoreController::class, 'retryFailedJobs']);
 
         // Stores & plans
         Route::get('/stores', [AdminStoreController::class, 'index']);
         Route::get('/stores/{id}', [AdminStoreController::class, 'show']);
+        // Support tool: let one entity type be migrated again for one store.
+        Route::post('/stores/{id}/reset-entity', [AdminStoreController::class, 'resetEntity']);
         Route::get('/plans', [AdminPlanController::class, 'index']);
         Route::post('/plans', [AdminPlanController::class, 'store']);
         Route::patch('/plans/{id}', [AdminPlanController::class, 'update']);

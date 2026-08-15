@@ -36,10 +36,19 @@ trait ShedsRejectedFields
         'transaction' => ['transactions'],
         'vendor' => ['vendor'],
         'collection' => ['collections'],
+        // "Handle has already been taken" is the single most common rejection on
+        // a store that already has products, and it arrived with a field path of
+        // ["input","handle"] — root "input", which matches no optional key — so
+        // the handle could never be shed and the whole PRODUCT failed over a URL.
+        'handle' => ['handle'],
+        'seo' => ['seo'],
+        'discount' => ['discountCode'],
+        'description' => ['descriptionHtml'],
     ];
 
     /**
-     * @param  callable(array): array{0: ?string, 1: array}  $write  fn($input) => [shopifyId, errors]
+     * @param  callable(array): (array{0: ?string, 1: array}|MigrationItemResult)  $write
+     *                        fn($input) => [shopifyId, errors], or a finished verdict
      * @param  array<string>  $optional  input keys safe to drop, in the caller's own judgement
      * @param  callable(string): void|null  $onShed  told each field name as it is dropped, so a
      *                                              migrator can learn from a repeating rejection
@@ -55,7 +64,19 @@ trait ShedsRejectedFields
         $errors = [];
 
         for ($round = 0; $round <= $maxRounds; $round++) {
-            [$shopifyId, $errors] = $write($input);
+            $outcome = $write($input);
+
+            // A write may answer with a finished verdict instead of an
+            // [id, errors] pair, for a failure that has nothing to do with the
+            // record's fields: an expired token, a missing scope, Shopify
+            // refusing the query outright. Dropping the description will not
+            // help with any of those, and trying it three times turns one clear
+            // refusal into four wasted API calls per record.
+            if ($outcome instanceof MigrationItemResult) {
+                return $outcome;
+            }
+
+            [$shopifyId, $errors] = $outcome;
 
             if ($shopifyId && empty($errors)) {
                 return empty($dropped)
@@ -114,12 +135,21 @@ trait ShedsRejectedFields
     {
         $candidates = array_values(array_intersect($optional, array_keys($input)));
 
-        // Shopify usually sends a path: ["phone"], ["variants","0","price"].
+        // Shopify sends a path: ["phone"], ["variants","0","price"] — but it also
+        // prefixes it with the MUTATION ARGUMENT on several mutations, so the same
+        // rejection arrives as ["input","handle"] from productSet and ["handle"]
+        // from collectionCreate. Reading only the first segment meant the argument
+        // name shadowed the real field and nothing could be shed at all.
+        //
+        // Scanning every segment is safe because a segment only counts when it
+        // matches a key we were explicitly told is optional for this migrator.
         $path = $error['field'] ?? null;
-        $root = is_array($path) ? ($path[0] ?? null) : (is_string($path) ? $path : null);
+        $segments = is_array($path) ? $path : (is_string($path) ? [$path] : []);
 
-        if ($root !== null && in_array($root, $candidates, true)) {
-            return $root;
+        foreach ($segments as $segment) {
+            if (is_string($segment) && in_array($segment, $candidates, true)) {
+                return $segment;
+            }
         }
 
         // Media errors (and some others) carry no field — read the message.

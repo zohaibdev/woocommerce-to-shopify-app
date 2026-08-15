@@ -54,6 +54,10 @@ class MigrationNotificationTest extends TestCase
             'status' => 'processing',
             'selected_entities' => ['product'],
             'options' => $options,
+            // Planning is a phase of its own now (see PlanBatchesJob), and
+            // nothing may finalize a run while it is outstanding. A fixture that
+            // hands out ready-made chunks is a run whose planning is done.
+            'planned_at' => now(),
         ]);
 
         MigrationEntity::create([

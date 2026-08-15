@@ -1,7 +1,7 @@
 {
   "$comment": "Machine-readable project context for Claude. Read this FIRST in a new chat — it replaces re-exploring the codebase. Keep it updated when architecture changes. Secrets are NEVER stored here; see `secrets_location`.",
   "schema_version": "1.0",
-  "last_updated": "2026-08-15",
+  "last_updated": "2026-08-17",
   "project": {
     "name": "Store Shift",
     "what_it_is": "Embedded Shopify app that migrates a merchant's WooCommerce store data into their Shopify store.",
@@ -71,14 +71,24 @@
       "interface": "Contracts/Migrator",
       "base_class": "AbstractMigrator — template method enforcing idempotency for every migrator",
       "registry": "MigratorRegistry — resolves + topologically orders entities by dependency",
-      "job_graph": "StartMigrationJob (plans counts + batches) -> ProcessBatchJob per page, each SELF-ADVANCING to the next via MigrationRunner::advance() -> FinalizeMigrationJob. NOT a Bus chain any more: a chain died at the first failed batch and froze the whole migration.",
+      "job_graph": "StartMigrationJob (counts + plan/pool caps, creates entity rows) -> PlanBatchesJob (walks each entity's ids and PINS them to chunks; resumable, time-bounded, hands chunks to the runner as it creates them) -> ProcessBatchJob per chunk, each SELF-ADVANCING via MigrationRunner::advance() -> FinalizeMigrationJob. NOT a Bus chain: a chain died at the first failed batch and froze the whole migration.",
       "resilience": "Batches are resumable (migration_batches.processed_offset) and time-bounded (35s, then hand off to a fresh job). Counters are DERIVED from migration_items by MigrationRunner::syncCounters(), never incremented, so a replayed batch cannot inflate progress. `php artisan migration:watchdog` (cron every 5 min) resumes anything that stalled.",
       "batch_addressing": "A batch resolves itself ONCE to a fixed list of WooCommerce ids (migration_batches.source_ids, via Migrator::listSourceIds -> `_fields=id`) and fetches records with `include=` from then on. Page/offset paging becomes a deep SQL OFFSET inside WordPress, so page 500 of a 50k catalogue was both the slowest query on the site and the one most likely to blow the 60s client timeout — and the 35s budget made every resume pay it again. Pinned ids also make the chunk STABLE: a record deleted mid-run leaves a null in its own slot (recorded as skipped, 'No longer exists in WooCommerce') instead of shifting every later record one place left past a resume's offset. source_ids null => falls back to the original page/offset path (older batches, sources that refuse the id listing).",
       "batch_leasing": "A job that runs out of time (or waits out a throttle) does NOT release the batch — it stays 'processing' and the current `attempts` value travels to the successor as a fencing token (ProcessBatchJob::$lease). Flipping the row to 'pending' left a window where the chunk looked free: inFlight() undercounted and a concurrent advance() handed the same chunk out again. claim() accepts a leased job only while attempts is unchanged, so a batch the watchdog revived is never worked by two jobs at once.",
       "field_shedding": "ShedsRejectedFields trait (replaces the old SurvivesMediaFailures/SurvivesFieldRejections). On a userError the migrator drops the OPTIONAL field Shopify complained about and retries, up to 3 rounds, then records the record with a warning naming what was left behind. Required fields are never shed and a MIXED error set still fails the item, so real problems stay visible. Per-migrator optional lists: product = files/metafields/collections/tags/vendor/productType/descriptionHtml; category = image/descriptionHtml; customer = phone/addresses/tags; order = transactions/shippingAddress/billingAddress/shippingLines/tags/note/processedAt.",
       "media_short_circuit": "After 5 products have their images rejected in one run, ProductMigrator stops sending images entirely for that migration (cache flag migration:{id}:media_unreachable) — halves the Shopify calls on a store whose /uploads is gone, and logs a warning explaining it.",
       "idempotency": "migration_items table, unique (shop_id, entity_type, woocommerce_id)",
-      "upsert": "ProductMigrator and CategoryMigrator upsert (update existing, recreate if deleted in Shopify). Others skip if already successful."
+      "upsert": "ProductMigrator and CategoryMigrator upsert (update existing, recreate if deleted in Shopify). Others skip if already successful.",
+      "planning_phase": "Chunks used to be addressed by PAGE NUMBER until their first job ran, and only then pinned to ids - so a record DELETED mid-run shifted every not-yet-pinned page one place left and the records on the boundary were never fetched at all (no migration_items row => invisible to counters, to the failed list and to retry). PlanBatchesJob now lists every id in one pass at the start, collapsing that window from the whole run to the listing pass. store_migrations.planned_at gates finalization; migration_entities.planned_items + last_source_id make it resumable and stop an INSERTED record being pinned twice. Guards worth knowing: a page that pins nothing is counted (MAX_BARREN_PAGES) because deriving the page number from max(page)+1 was a live lock; a store that answers the COUNT but lists NOTHING falls back to page paging rather than being zeroed, which would have reported a clean successful run that migrated nothing; a listing shorter than the count revises total_items down so the progress bar can reach 100%. NOT a snapshot - a delete DURING the pass can still slip through, and FinalizeMigrationJob::reconcile() reports it.",
+      "description_images": "OPT-IN (`rehost_description_images`). App\\Migration\\DescriptionImages rewrites every <img> in descriptionHtml/body that is served by the merchant's OWN store, uploading each via fileCreate and polling until Shopify has a CDN url. Used by Product, Category and Article. Cached per shop in migration_files (source-url hash -> Shopify url) because description images are template furniture repeated across the catalogue - without it one shared banner on a 20k store is 20k uploads. Time-bounded per record; images left behind produce a warning, never a failed product. Third-party hosts are deliberately untouched.",
+      "time_estimates": "App\\Support\\MigrationEstimate. Records are NOT interchangeable, so each entity carries a weight (product 1.0, coupon 0.2) and everything is arithmetic on weighted work. Pre-start: modelled from counts and the shop's Shopify parallelism, per entity so the wizard can answer for whatever the merchant ticked. Live: derived from the run's OWN elapsed time once it has done enough to have an opinion, so it accounts for the merchant's host, image sizes and plan. `basis` says which - a modelled number presented as measured is how an estimate loses trust for good."
+    },
+    "queue": {
+      "driver": "database (shared hosting has no Redis)",
+      "self_healing": "App\\Support\\QueueKeeper spawns detached `queue:work --stop-when-empty --max-time=55 --timeout=300` processes when there is queued work and free capacity. It runs a POOL, not one worker: slots are leased through the cache (`queue-keeper:worker-slot:N`, leased for exactly the worker's 55s life, no grace — grace left a 15% hole in coverage and brief overlap is harmless), bounded by `queue.auto_workers` (QUEUE_AUTO_WORKERS, default 2) and never more than there are queued jobs. One worker was the old behaviour and it made the whole concurrency design decorative: advance() dispatches up to 8 batches and a single worker ran them one after another. QueueKeeper::canSpawn() reports honestly when proc_open is disabled, and the admin banner then shows the cron instructions instead of a button that cannot work.",
+      "heartbeats": "Two, and they are different things. KeepQueueAlive middleware fires on ordinary API traffic (covers the merchant watching the page). `php artisan queue:keepalive` on a ONE-MINUTE cron covers everything else — a self-started worker lives 55s, so before this existed an unwatched run got 55 seconds of work per 5-minute watchdog sweep, an 18% duty cycle that turned a 14-hour migration into a three-day one. Never run queue:keepalive alongside supervisor or queue-workers.sh: set QUEUE_AUTO_WORKER=false there or you get two pools.",
+      "failed_jobs": "App\\Support\\QueueMaintenance::retryFailedJobs() re-queues automatically, max 3 auto-retries per job (cache-counted) so a genuinely broken job is left for a human.",
+      "still_prefer_a_real_worker": "The self-starter is a safety net, not a replacement. A cron every minute, or supervisor (deploy/supervisor/store-shift-worker.conf), gives far better throughput. Set QUEUE_AUTO_WORKER=false when running either, so the two do not compete."
     }
   },
   "migrators": {
@@ -86,18 +96,17 @@
       "ProductMigrator": "Uses Shopify productSet. Migrates title, description, vendor, productType, status, tags, prices, compareAtPrice, SKU, inventory + tracking, weight (+unit), requiresShipping, variants + options, product AND variant images, metafields, brands, collection links. Variants/images are INLINE here.",
       "CategoryMigrator": "Woo categories -> Shopify collections (incl. category image). Upserts.",
       "CustomerMigrator": "Profile + addresses + custom tags. NO passwords (hash incompatible).",
-      "OrderMigrator": "orderCreate: line items, shipping lines, addresses, financial status, historical processedAt, transactions, tags, TAX LINES (rate derived from total_tax/total) and DISCOUNTS (Woo coupon_lines -> one itemFixedDiscountCode; extras and any custom Woo status are written into the order note).",
+      "OrderMigrator": "orderCreate: line items priced PRE-discount via unitPrice() (subtotal, then total, and `price` only as a last resort — Woo's `price`/`total` are already discounted, so pairing them with discountCode took the coupon off twice), shipping lines, addresses, financial status, historical processedAt, transactions, tags, TAX LINES (rate derived from total_tax/total) and DISCOUNTS (Woo coupon_lines -> one itemFixedDiscountCode; extras and any custom Woo status are written into the order note).",
       "CouponMigrator": "Woo coupons -> discountCodeBasicCreate. percent/fixed_cart/fixed_product map; any other type FAILS loudly. Restrictions Shopify cannot express (email_restrictions, exclude_sale_items, excluded products/categories, limit_usage_to_x_items) are named in a WARNING on the record — a staff-only code that silently starts working for everyone is worse than one the merchant re-creates by hand.",
       "BlogMigrator": "WordPress POST CATEGORIES (wp/v2/categories) -> Shopify blogs. WP has one blog with categories; Shopify has many blogs. Upserts, because articles look their blog up by mapping on every run.",
-      "ArticleMigrator": "wp/v2/posts -> articleCreate. Filed under the blog made from the post's category, falling back to a shop-wide 'News' blog (looked up by handle before creating) so a taxonomy mismatch never costs a post. Keeps the original publish date, slug, excerpt, featured image and SEO metafields. COMMENTS are stored as a `comments` JSON metafield, not as Shopify comments — the Admin API cannot create those with their original author or date.",
-      "PageMigrator": "wp/v2/pages (published only) -> pageCreate. Title, body, slug, original publishDate. SEO goes to the reserved global.title_tag / global.description_tag metafields, because Shopify pages have no `seo` field.",
-      "ReviewMigrator": "SOURCE IS REVIEWS, WRITE IS PER PRODUCT — these are different grains and getting it wrong is easy. Paging PRODUCTS (the first cut) made the wizard offer '50,000 reviews' to a store with thirty and re-read the whole catalogue to find them; so count/fetchBatch use products/reviews, sourceId is the REVIEW id (so progress reaches its total), and the metafield write covers the product's WHOLE set, guarded once per product per run by a SafeCache flag. Reviews -> ONE `woocommerce.reviews` JSON metafield per product (count, average, and each review's date/rating/author/verified/content). Shopify's Admin API has NO product reviews and the first-party app was sunset, so this preserves the data rather than pretending to migrate it — the record carries a warning saying a review app or theme block is needed to display them. Unit of work is a PRODUCT, not a review, because a metafield holds the whole set. Reviewer EMAIL is deliberately dropped (personal data in a storefront-readable metafield)."
+      "ArticleMigrator": "wp/v2/posts -> articleCreate. Filed under the blog made from the post's category, falling back to a shop-wide 'News' blog (looked up by handle before creating) so a taxonomy mismatch never costs a post. Keeps the original publish date, slug, excerpt, featured image and SEO metafields. The featured image needs `_embed=wp:featuredmedia` on the read (ArticleMigrator::QUERY): a plain wp/v2/posts response carries `featured_media` as a bare ATTACHMENT ID, so without it image() had nothing to read and every post arrived with no image, silently. COMMENTS are stored as a `comments` JSON metafield, not as Shopify comments — the Admin API cannot create those with their original author or date.",
+      "ReviewMigrator": "SOURCE IS REVIEWS, WRITE IS PER PRODUCT — these are different grains and getting it wrong is easy. Paging PRODUCTS (the first cut) made the wizard offer '50,000 reviews' to a store with thirty and re-read the whole catalogue to find them; so count/fetchBatch use products/reviews, sourceId is the REVIEW id (so progress reaches its total), and the metafield write covers the product's WHOLE set, guarded once per product per run by a SafeCache flag. Reviews -> ONE `woocommerce.reviews` JSON metafield per product (count, average, and each review's date/rating/author/verified/content). Shopify's Admin API has NO product reviews and the first-party app was sunset, so this preserves the data rather than pretending to migrate it — the record carries a warning saying a review app or theme block is needed to display them. Unit of work is a PRODUCT, not a review, because a metafield holds the whole set. Reviewer EMAIL is deliberately dropped (personal data in a storefront-readable metafield). A review whose product was not migrated is recorded SKIPPED, not failed: reviews are unmetered while products stop at the plan cap, so on a free plan that is the normal case and marking it failed buried the real failures under hundreds of red rows."
     },
     "NO_OP_KEPT_FOR_COMPAT": {
       "AttributeMigrator": "Does nothing — options come from ProductMigrator",
       "ProductVariationMigrator": "Does nothing — variants are inline in ProductMigrator",
       "MediaMigrator": "Does nothing — images are inline in ProductMigrator",
-      "why": "These were removed from the wizard UI because selecting them created no-op jobs and inflated estimates. Registry still accepts them so old migrations don't break."
+      "why": "These were removed from the wizard because selecting them created no-op jobs and inflated estimates. Registry still accepts them so old migrations don't break. count() now returns 0 for all three: it used to make a real WooCommerce count call and plan a batch per page, so selecting `media` on a 20k store meant 200 jobs that each downloaded a page of products and skipped every record."
     },
     "wizard_entities_shown_to_merchant": [
       "product",
@@ -107,7 +116,6 @@
       "coupon",
       "blog",
       "article",
-      "page",
       "review"
     ],
     "field_coverage_notes": {
@@ -115,6 +123,9 @@
       "handles": "product/category/page/blog/article all send the WooCommerce slug as the Shopify handle, so old URLs can be redirected one-to-one. Non-Latin slugs arrive URL-encoded and are dropped rather than shipped as gibberish. `handle` is always in the shed list: Shopify rejects one it has already given another object, and that is worth a URL, not the record.",
       "barcode": "UPC/EAN/GTIN has no WooCommerce core field. config/migration.php `barcode_keys` lists 8 common plugin meta keys (MIGRATION_BARCODE_KEYS); the first barcode-SHAPED value wins, so a plugin reusing one of those keys for something else cannot put junk on the variant.",
       "images_in_description": "STILL A GAP. descriptionHtml passes through verbatim, so <img> tags keep pointing at the WooCommerce URL — they break when the old store goes offline. Re-hosting them means parsing the HTML, uploading each file to Shopify Files and rewriting the src."
+    },
+    "removed": {
+      "PageMigrator": "REMOVED at the owner's request. wp/v2/pages -> pageCreate worked, but it only ever saw PUBLISHED pages (the consumer key does not authenticate wp/v2), and Shopify's own page editor handles the handful a store has faster than explaining that caveat. Do not re-add without deciding what to do about drafts."
     }
   },
   "services": {
@@ -129,8 +140,8 @@
   "database_tables": {
     "shops": "shopify_domain, access_token(enc), refresh_token(enc), token_expires_at, refresh_token_expires_at, scopes, installed_at, uninstalled_at",
     "woocommerce_connections": "store_url, consumer_key(enc), consumer_secret(enc), status, wc_version, wp_version",
-    "store_migrations": "NOTE: named store_migrations (NOT migrations — that's Laravel's own table). name, status, selected_entities(json), options(json: custom_tags, default_vendor, weight_unit)",
-    "migration_entities": "per-entity counters (total/processed/successful/failed)",
+    "store_migrations": "NOTE: named store_migrations (NOT migrations — that's Laravel's own table). name, status, selected_entities(json), options(json: custom_tags, default_vendor, weight_unit) planned_at gates finalization while PlanBatchesJob is still pinning ids.",
+    "migration_entities": "per-entity counters (total/processed/successful/failed) plus planning progress (planned_items, last_source_id) so PlanBatchesJob can resume.",
     "migration_batches": "one row per chunk/page. source_ids(json, nullable) pins the exact Woo ids the chunk owns; processed_offset is a position within that pinned list",
     "migration_items": "IDEMPOTENCY MAPPING. unique(shop_id, entity_type, woocommerce_id) -> shopify_id",
     "migration_logs": "info/warning/error per migration",
@@ -139,7 +150,8 @@
     "subscriptions": "shop_id, plan_id, status, shopify_charge_id",
     "support_tickets / ticket_replies": "merchant support with admin replies",
     "dashboard_contents": "admin-managed content shown in the merchant app",
-    "app_settings": "admin-editable app config. One ENCRYPTED json blob per key: 'mail' = SMTP (overrides .env at boot via MailSettings::apply()), 'branding' = email logo + name (App\\Services\\Branding). The logo file lives in storage/app/branding and is streamed by the public GET /api/branding/logo route, so no storage:link is needed."
+    "app_settings": "admin-editable app config. One ENCRYPTED json blob per key: 'mail' = SMTP (overrides .env at boot via MailSettings::apply()), 'branding' = email logo + name (App\\Services\\Branding). The logo file lives in storage/app/branding and is streamed by the public GET /api/branding/logo route, so no storage:link is needed.",
+    "migration_files": "source-url hash -> Shopify CDN url, per shop. Only used by the description-image re-hosting, and what makes it affordable."
   },
   "plans_and_limits": {
     "source_of_truth": "plans table (DB), editable from /app/admin/plans — no deploy needed. AdminSeeder now only CREATES missing plans; it used to updateOrCreate, and the deploy runbook runs it every release, so every price and cap an admin had set was silently reset by unrelated deploys. Use PLAN_SEED_OVERWRITE=true to deliberately push code values back out.",
@@ -148,7 +160,9 @@
       "0": "feature not included in the plan",
       "number": "hard cap",
       "total": "SHARED record budget across product+customer+order (App\\Support\\PlanPool). When present it is what meters the plan; per-entity keys still apply on top and the tighter wins. Categories are NEVER metered.",
-      "contact_only": "true => negotiated off-platform. POST /api/billing/subscribe 422s with contact_only:true, and Pricing shows 'Contact us' instead of an Upgrade button."
+      "contact_only": "true => negotiated off-platform. POST /api/billing/subscribe 422s with contact_only:true, and Pricing shows 'Contact us' instead of an Upgrade button.",
+      "content_features": "`coupons`, `blogs` and `reviews` are separate keys, each metered on its own and NEVER drawn from the shared `total` pool — charging a merchant's product budget for six blog posts would be a surprise. `blogs` covers blogs AND their posts: they are one feature to a merchant, and a plan selling blogs without posts would deliver empty containers. `metafields` stays a boolean and now covers metafields AND brand tags. ABSENT means unlimited, so plans created before these keys existed keep working — which also means an existing install must set them in /app/admin/plans (or re-seed with PLAN_SEED_OVERWRITE=true) before free shops are actually gated.",
+      "reset": "Allowances are per BILLING PERIOD, not lifetime. App\\Support\\BillingPeriod::currentStart() rolls the subscription's start date forward whole months (addMonthsNoOverflow, so a 31st anchor does not skip February), so each merchant's month runs from their own billing date rather than the 1st. A shop with no subscription anchors to installed_at, so the free Starter plan resets too. PlanAllowance and PlanPool both filter migration_items by created_at >= that date."
     },
     "pool_rules": [
       "The pool counts DISTINCT records (migration_items is unique per shop+entity+source id), so re-migrating something already migrated costs nothing — otherwise a 15k-product shop under a 20k pool could re-run exactly once and then be refused forever.",
@@ -162,20 +176,29 @@
         "products": 10,
         "customers": 10,
         "orders": 0,
-        "metafields": false
+        "metafields": false,
+        "coupons": 0,
+        "blogs": 0,
+        "reviews": 0
       },
       "basic": {
         "price": 19,
         "products": 2000,
         "customers": 2000,
         "orders": 1000,
-        "metafields": true
+        "metafields": true,
+        "coupons": null,
+        "blogs": null,
+        "reviews": null
       },
       "pro": {
         "price": 49,
         "total": 20000,
         "metafields": true,
-        "$comment": "ONE budget of 20,000 records across products+customers+orders, not 20,000 of each. Three separate caps made the headline number meaningless — a 20k-product store and a 60k-records-across-three store bought the same plan."
+        "$comment": "ONE budget of 20,000 records across products+customers+orders, not 20,000 of each. Three separate caps made the headline number meaningless — a 20k-product store and a 60k-records-across-three store bought the same plan.",
+        "coupons": null,
+        "blogs": null,
+        "reviews": null
       },
       "enterprise": {
         "price": 149,
@@ -183,7 +206,10 @@
         "customers": null,
         "orders": null,
         "metafields": true,
-        "contact_only": true
+        "contact_only": true,
+        "coupons": null,
+        "blogs": null,
+        "reviews": null
       }
     },
     "fallback": "A shop with no active subscription automatically gets the 'starter' plan."
@@ -413,6 +439,117 @@
       "issue": "Telemetry could kill a migration",
       "cause": "SourceHealth::record() and the page cache write straight through the Cache facade — which is the DATABASE store in production — so an oversized blob or a locked table threw out of the middle of a WooCommerce request and failed the batch.",
       "fix": "App\\Support\\SafeCache for every cache use that is an optimisation. SourceHealth::record() is wrapped whole. Cached page limit lowered to 1MB."
+    },
+    {
+      "issue": "Every migrated order with a coupon totalled LESS than the customer paid",
+      "cause": "OrderMigrator priced lines from `line_items[].price`, which WooCommerce has already reduced by the coupon, and then ALSO sent the coupon as `discountCode` — so Shopify subtracted it twice. The unit test hid it by using a fixture where total == price x qty, which never happens on a discounted Woo line.",
+      "fix": "OrderMigrator::unitPrice() reads `subtotal` (the only pre-discount field), falling back to `total`, with `price` last. FieldCoverageTest locks both the discounted and the no-subtotal case."
+    },
+    {
+      "issue": "'Handle has already been taken' failed the whole product",
+      "symptom": "Products lost outright on any store that already had a product with the same slug",
+      "cause": "ShedsRejectedFields::fieldForError() only read field[0]. productSet prefixes the path with its mutation argument, so the error arrived as ['input','handle'] and 'input' matched no optional key. `handle` and `seo` also had no MESSAGE_HINTS entry to fall back on.",
+      "fix": "Every segment of the field path is checked (a segment only counts if it is in the migrator's own optional list), plus handle/seo/discount/description message hints."
+    },
+    {
+      "issue": "A typo in the WooCommerce store URL destroyed a working connection",
+      "cause": "connect() wrote the credentials with updateOrCreate and tested AFTERWARDS. The old key was gone, the new one did not work, and the form can never show a stored secret — so the only way back was issuing a fresh key pair in WordPress.",
+      "fix": "The candidate credentials are tested BEFORE anything is persisted; a failure returns 422 with kept_existing:true and the stored connection untouched. Key/secret are now optional when one is already stored (URL-only edits), and a scheme-less 'mystore.com' is normalised to https://."
+    },
+    {
+      "issue": "The connection page showed 'Request failed (422)' instead of the real reason",
+      "cause": "The WooCommerce endpoints answer 422 with {connection..., error: 'HTTP 401: ...'}, but the client's errorMessage() only looked at `message` and `errors`.",
+      "fix": "errorMessage() also reads `error`. That sentence is the most useful one the app produces."
+    },
+    {
+      "issue": "Picking 'Blogs' created empty blogs in Shopify and read as a broken feature",
+      "cause": "blog and article are separate entities; selecting the blog alone migrated the containers and none of the posts.",
+      "fix": "blog <-> article imply each other in MigrationController::IMPLIED_ENTITIES and in the wizard's enforceDeps, so picking either brings both. The wizard also now says when a zero count is the host hiding /wp-json/wp/v2/ rather than the store genuinely having none."
+    },
+    {
+      "issue": "The `metafields` plan flag was DEAD CONFIG for the life of the app",
+      "symptom": "Every merchant on the free Starter plan received their full custom meta_data and brand data, and the paid tiers' headline feature was given away",
+      "cause": "Shop::planAllows() was written for exactly this and NOTHING ever called it. Every plan carried `metafields`, the pricing page drew 'Metafields & brands' as a paid line, and no test noticed because every test asserted what the migrator SENT rather than what the plan permitted.",
+      "fix": "ProductMigrator::metafieldsAllowed() gates both metafields() and the brand TAGS (they are sold together). VENDOR is deliberately still sent — it is a core Shopify field, not a paid extra. StartMigrationJob logs a warning up front so a reduced run is never silent. PlanFeatureGatingTest covers all three."
+    },
+    {
+      "issue": "Shop::currentPlan() ran two queries on EVERY call",
+      "cause": "Harmless while it was only consulted per request; it is now consulted per RECORD by the metafield gate, which on a 50k catalogue would have been 100,000 queries buying nothing.",
+      "fix": "Memoised on the model instance, with forgetPlan() for tests and subscription changes. A plan cannot change part-way through a batch."
+    },
+    {
+      "issue": "An implied dependency the plan blocked refused the whole run",
+      "symptom": "Ticking only Reviews answered 422 'your plan does not include: product' — naming an entity the merchant never selected and could not see",
+      "cause": "IMPLIED_ENTITIES added the dependency unconditionally, and PlanAllowance::lockedAmong() then aborted on it.",
+      "fix": "MigrationController skips an implied entity whose limit is 0. CurrentShop is resolved before the loop so the plan is available to it."
+    },
+    {
+      "issue": "Plan allowances NEVER reset — a recurring subscription behaved like a one-off purchase",
+      "symptom": "A merchant on $19/month migrated their 2,000 products in month one, then paid every month afterwards to be told they were 'exhausted'",
+      "cause": "PlanAllowance and PlanPool counted migration_items over ALL TIME, with no date filter of any kind. Proven by AllowanceResetTest before the fix.",
+      "fix": "Both now count only the CURRENT BILLING PERIOD (App\\Support\\BillingPeriod). The period is derived ARITHMETICALLY from the subscription's start date — Shopify does not reliably send an app-subscription event on every renewal, and a missed webhook would have frozen an allowance for a month with nothing in the app to explain it. Free shops anchor to installed_at so Starter resets too. `created_at` not `updated_at`, so re-running to refresh already-migrated records stays free."
+    },
+    {
+      "issue": "The queue stopped and every migration on the platform froze silently",
+      "symptom": "'Queue worker is not running — 26 jobs waiting'. Merchants watch a progress bar that will never move.",
+      "cause": "Nothing consumed the queue unless an operator had installed a cron, and the only recovery the app offered was a banner telling them to SSH in and run queue:work / queue:retry all by hand.",
+      "fix": "App\\Support\\QueueKeeper starts a DETACHED `queue:work` off ordinary API traffic (KeepQueueAlive middleware, in terminate() so nothing is delayed), guarded by a one-per-minute cache lock. QueueMaintenance re-queues failed jobs automatically, bounded to 3 auto-retries per job so a poison job cannot loop. migration:watchdog does both on every sweep. Admin panel has 'Start worker now' and 'Re-queue them' buttons. QUEUE_AUTO_WORKER=false wherever supervisor/Horizon runs. Jobs are NOT run inside the web request: ProcessBatchJob has a 300s timeout and would leave half-finished batches and 500s."
+    },
+    {
+      "issue": "Every product failed with 'No id returned by Shopify' and nothing said why",
+      "symptom": "A whole run of 20,000 products, or every customer and order, failing with one identical sentence that names neither a cause nor a fix",
+      "cause": "ProductMigrator and CategoryMigrator read only a mutation's `userErrors`. Shopify puts a refusal of the REQUEST — ACCESS_DENIED for a missing scope, or for customers/orders the Protected Customer Data approval that is still outstanding — in the TOP-LEVEL `errors`, and leaves the mutation payload empty. So the migrator saw no errors and no id. The other migrators folded topLevelErrors into their errors array, which recorded the message but then sent it round the field-shedding loop: four API calls per record to drop fields that had nothing to do with it.",
+      "fix": "AbstractMigrator::fatalShopifyError() turns a top-level error into a merchant-readable sentence (naming PCD approval and scopes explicitly for ACCESS_DENIED). Every migrator returns it as a finished MigrationItemResult, and ShedsRejectedFields now accepts a MigrationItemResult from its write callback as 'final answer, stop shedding'. BlogMigrator and CategoryMigrator also no longer fall through to a CREATE on a refused UPDATE — that was a duplicate factory waiting for a token to lose a scope mid-run. ThroughputHardeningTest covers product, category, customer."
+    },
+    {
+      "issue": "'Retry failed items' looped forever and could not fit in memory",
+      "symptom": "On a run where every record failed for the same reason, the retry job re-queued itself endlessly, re-attempting the same first hundred records and never reaching the rest — or died of memory before it started",
+      "cause": "TWO faults in the same job. (1) Each pass re-read every still-failed record from the top, on the comment's assumption that 'items already retried are no longer failed'. True only when the retry WORKED — and the runs that most need this button (no PCD approval, an expired token, a WooCommerce store that has gone away) fail every record again, so nothing ever advanced. (2) It loaded the whole failed set as Eloquent models in one get(); twenty thousand of those in a job that also holds a page of Woo data does not fit in the 128MB shared hosting gives PHP.",
+      "fix": "The sweep carries a CURSOR (resumeEntity + afterId) and reads failed rows in bounded slices past it, so the cursor advances whether or not a record recovered and one sweep is finite. A throttled chunk resumes at the chunk's START rather than being stepped over, and MAX_THROTTLE_WAITS bounds that in turn (mirroring ProcessBatchJob) so a permanently throttled chunk is swept past instead of pausing for ever. RetrySweepTest covers all of it. NOTE the bug found while writing those tests: retryChunk was changed to return `?int` and its final `return true` was left — with no strict_types in the file that becomes 1, so every healthy chunk read as 'throttled, retry in 1s'."
+    },
+    {
+      "issue": "GDPR customers/redact was a stub that deleted nothing",
+      "symptom": "The endpoint answered {ok:true} and erased no data — indistinguishable from working",
+      "cause": "A TODO saying 'once linked'. The link was always there: migration_items.shopify_id holds the customer's gid, and the webhook payload names the subject by Shopify id.",
+      "fix": "customersRedact() deletes this shop's mapping rows for customer.id and every orders_to_redact id, matched on the gid tail and anchored (`%/Customer/123`) so id 123 cannot be matched by 4123. Shop-scoped, so one merchant's redaction cannot reach another's rows. GdprWebhookTest asserts on the rows, because the response body looks the same either way."
+    },
+    {
+      "issue": "The wizard's preview could 504 on exactly the biggest stores",
+      "cause": "GET /api/woocommerce/preview counts EIGHT entities inside one HTTP request, with no job timeout to hide behind. On a store that hides X-WP-Total each of those falls back to countByProbe(), ~2·log₂(pages) of the slowest queries on the site — and StartMigrationJob then paid for the same probes again minutes later.",
+      "fix": "WooCommerceClient caches the PROBE result for 5 minutes, keyed by store URL + resource + query. Deliberately not the header path: a store that reports its own counts is always read fresh. A large first load is still possible; the fix removes the repeat."
+    },
+    {
+      "issue": "An unwatched migration ran at 18% speed",
+      "symptom": "A run that took 14 hours with the browser open took three days with it closed — and the app tells merchants they may close it",
+      "cause": "QueueKeeper started exactly ONE worker, living 55 seconds, and the only heartbeat once the merchant closed the tab was migration:watchdog on a five-minute cron.",
+      "fix": "QueueKeeper runs a slot-leased POOL (queue.auto_workers), and `queue:keepalive` runs every minute. See architecture.queue."
+    },
+    {
+      "issue": "One wasted WooCommerce request per variable product, forever",
+      "cause": "ImageSizeResolver only remembered attachment ids that came back WITH generated sizes. An id with none — an SVG, an external image, lost metadata — was left out of the table, so the array_diff guard put it straight back into the next request. prefetchVariationImages() runs once per product, so on a 20k catalogue that is 20,000 extra requests against the merchant's own host asking a question already answered 'no'.",
+      "fix": "Every id we ASKED about is recorded, empty entry and all. url() already read an empty entry as 'send the original'."
+    },
+    {
+      "issue": "MIGRATION_SHOPIFY_CONCURRENCY was dead config",
+      "symptom": "Production set it to 2; the effective value was the code default of 8",
+      "cause": "config/migration.php reads MIGRATION_MAX_CONCURRENCY. No key of the other name has ever existed.",
+      "fix": ".env.production now sets MIGRATION_MAX_CONCURRENCY."
+    },
+    {
+      "issue": "Pages silently stopped being cached and every resume re-downloaded them",
+      "cause": "The cap was 8MB written into a single row of the `cache` table, which on production is MySQL — past max_allowed_packet on a stock server (4MB). SafeCache swallowed the failure by design, so the optimisation just never engaged and nothing anywhere said so.",
+      "fix": "MIGRATION_MAX_CACHED_PAGE_BYTES (default 3.5MB, under the lower figure), and the run logs ONE line naming the reason — too big, or the store refused it — so a slow migration can be connected to a setting the operator can change."
+    },
+    {
+      "issue": "A run could deliver 19,950 of 20,000 records and report 'completed'",
+      "cause": "A chunk is addressed by page number until the first time it RUNS, and only then pinned to concrete ids. On a run lasting hours, a record deleted at the source shifts every not-yet-pinned page one place left, and records fall through the gap between one chunk's end and the next chunk's start. They are never fetched, so they have no migration_items row at all — invisible to the counters, to the failed-items list and to 'Retry failed items'.",
+      "fix": "NOT prevented — preventing it needs id pinning to move into a resumable planning phase (see not_built_yet). FinalizeMigrationJob::reconcile() now DETECTS it: an entity that accounted for fewer records than it planned, with no failed batch to explain the difference, writes a warning naming the shortfall and telling the merchant to re-run. Silent short delivery is the worst outcome a migration tool has."
+    },
+    {
+      "issue": "The self-starting worker silently did nothing on Windows",
+      "symptom": "The log said a worker was dispatched; the queue never moved. Local development only.",
+      "cause": "cmd.exe reads the first QUOTED argument to `start` as the WINDOW TITLE, so `start /B \"C:\\php.exe\" \"artisan\"` tried to run `artisan` as the program. `start` returns 0 either way, so nothing reported it. Production takes the nohup branch and was unaffected — which is why it went unnoticed.",
+      "fix": "`start \"\" /B ...` with an explicit empty title. Verified end to end: a dispatched job was consumed by the detached worker."
     }
   ],
   "blockers_to_going_live": [
@@ -454,24 +591,24 @@
     },
     {
       "item": "Persistent queue workers (supervisor, or Redis + Horizon)",
-      "status": "CONFIG WRITTEN, NOT YET DEPLOYED — `deploy/supervisor/store-shift-worker.conf` (8 procs, VPS) and `deploy/queue-workers.sh` (cron keeper for shared hosting, MIGRATION_WORKERS=4 default). DEPLOYMENT.md §6 now documents both.",
-      "impact": "ShopifyPlan derives up to 8 parallel workers from the shop's real API budget, but the old single cron-launched `queue:work --stop-when-empty --max-time=55` ran them one after another — ~42h serial vs ~5-6h across 8 workers on 50k products. That cron also passed no --timeout (worker default 60s applied to any job without its own) and --stop-when-empty quit mid-run every time the queue momentarily emptied. Still needs to actually be installed on the server."
+      "status": "CONFIG WRITTEN, NOT YET DEPLOYED — `deploy/supervisor/store-shift-worker.conf` (8 procs, VPS) and `deploy/queue-workers.sh` (cron keeper for shared hosting, MIGRATION_WORKERS=4 default). DEPLOYMENT.md §6 documents both. The app can now also run its own POOL (QUEUE_AUTO_WORKERS + the queue:keepalive cron), which closes the gap on hosting where neither is possible — but it is still the slower option: workers live 55s and are relaunched, where supervisor keeps them up.",
+      "impact": "ShopifyPlan derives up to 8 parallel workers from the shop's real API budget. On a 20k-product catalogue at ~2.5s per product that is ~14h serial, ~4-6h across 4 workers, ~3-4h across 8. NOTE the shop's own Shopify plan caps this independently of how many processes are running: Basic (50 pts/s restore) = 2 concurrent batches, Shopify = 3, Advanced = 6, Plus = 8. Set QUEUE_AUTO_WORKER=false wherever supervisor or the worker cron runs, or the two pools stack."
     }
   ],
   "not_built_yet": {
     "high_value_ideas": [
-      "Migration preview / dry-run (show what WILL happen before starting) — highest trust win",
-      "Incremental / delta sync (only migrate what changed) — payload_hash column already exists; justifies subscription",
+      "Migration preview / dry-run (show what WILL happen before starting) - highest trust win",
+      "Incremental / delta sync (only migrate what changed) - payload_hash column exists but is UNUSED",
       "Rollback / undo a migration (mapping table has every Shopify ID)",
       "SEO redirects (Woo URLs -> Shopify URLs)",
-      "Scheduled migrations",
-      "Coupons -> Discounts, Reviews, Pages/Blogs"
+      "Scheduled migrations"
     ],
     "smaller_gaps": [
       "Order line items are custom lines, not linked to migrated product variants",
       "Redis + Horizon (currently database queue)",
       "Some dashboard_contents types have no display surface (useful_link, email_info, other_resource)",
-      "Batches now fetch by id (see architecture.migration_engine.batch_addressing), but RESOLVING a batch to its ids is still one `_fields=id` page request at that page's offset. That request is far cheaper than a full page (no images/meta/variation assembly) and is paid once per batch instead of once per resume, but it is still an OFFSET. True keyset paging is not available: Woo REST v3 has no after_id on products. Collecting every id in one up-front pass would remove even that, at the cost of making planning a resumable multi-job phase."
+      "A re-run still walks WooCommerce from page 1 and re-upserts everything already migrated. The plan cap is not breached (migration_items is unique per source id) but a 2,000-product re-run to fix 100 failures costs 2,000 Shopify writes. 'Retry failed items' is the cheap path and should be the one the UI pushes.",
+      "Planning lists ids in one pass, which shrinks the drift window from hours to minutes - but it is still not a SNAPSHOT. A record deleted during the pass can slip between two pages; that is detected and reported, not prevented. Preventing it needs something WooCommerce REST does not offer (no keyset paging on products)."
     ]
   },
   "commands": {
@@ -483,12 +620,13 @@
     "typecheck": "cd app/frontend && npx tsc -b",
     "production_build": "build-prod.bat  (builds frontend, copies SPA shell + assets, makes store-shift-deploy.zip)",
     "sync_webhooks": "php artisan shopify:sync-webhooks",
+    "keep_queue_running": "php artisan queue:keepalive  (cron EVERY MINUTE in production, unless supervisor/queue-workers.sh runs — then set QUEUE_AUTO_WORKER=false and drop this)",
     "resume_stalled_migrations": "php artisan migration:watchdog [--stall=10]  (cron every 5 min in production)",
     "seed_admin_and_plans": "php artisan db:seed --class=AdminSeeder --force",
     "prune_logs": "php artisan migration:prune [--days=90]  (cron daily; deletes activity logs of long-finished runs)"
   },
   "testing": {
-    "total_tests": 225,
+    "total_tests": 324,
     "command": "cd app/backend && php artisan test",
     "suites": {
       "MigrationEngineTest": "queue dispatch, dependency ordering, idempotency, custom tags",
@@ -510,7 +648,20 @@
       "PlanPoolTest": "The shared record budget: it is spent across entities rather than repeated per entity; categories never draw on it; re-migrating records already counted is free; a plan with no `total` keeps the old per-entity behaviour; /preview reports limit/used/remaining; StartMigrationJob caps entities against it in dependency order and logs why; an emptied budget reads as exhausted; a contact_only plan 422s from Shopify billing",
       "PlanSeedingTest": "Re-seeding keeps limits an admin changed, still creates a genuinely missing plan, and PLAN_SEED_OVERWRITE=true resets to code values",
       "BatchRecoveryTest": "What happens to a CHUNK when things go wrong around it rather than inside one record: an unread batch is retryable and resumes at its offset; the retry endpoint is offered when only whole batches failed; a batch pins its source ids and then fetches by include=; a record deleted mid-run is recorded instead of shifting the page; a source that refuses the id listing still migrates by page; the watchdog revives EVERY stalled chunk but leaves queued ones alone and restarts a run whose dispatches were lost; planning gets more than the worker's default timeout; a chunk with no planned total is processed rather than silently skipped",
-      "ScaleHardeningTest": "The failure modes only a large, messy store produces: an over-long error message no longer kills a batch; a second concurrent migration is refused; a store that hides X-WP-Total is counted by probing; expired credentials are reported instead of read as an empty store; a permanently throttled batch is given up on; merchant data mentioning 'throttled' is not mistaken for throttling; an interrupted write adopts the object Shopify already has; a cancelled batch is handed back rather than left in flight; a broken cache backend cannot fail a batch"
+      "ScaleHardeningTest": "The failure modes only a large, messy store produces: an over-long error message no longer kills a batch; a second concurrent migration is refused; a store that hides X-WP-Total is counted by probing; expired credentials are reported instead of read as an empty store; a permanently throttled batch is given up on; merchant data mentioning 'throttled' is not mistaken for throttling; an interrupted write adopts the object Shopify already has; a cancelled batch is handed back rather than left in flight; a broken cache backend cannot fail a batch",
+      "FieldCoverageTest": "The fields a merchant only notices are missing after the run: SEO copy, URL slugs (including a percent-encoded non-Latin one), barcodes, both customer addresses, order tax, order discounts applied exactly once, and a taken handle costing the URL rather than the product.",
+      "WooConnectionSettingsTest": "The connection form, which a merchant only visits when something is already wrong: a URL corrected without re-entering the API keys, a failed save leaving the working credentials intact, a scheme-less store URL accepted, a first connection still requiring both credentials, and the store's own refusal reaching the client.",
+      "BlogEndToEndTest": "Blogs driven the way a real run drives them — plan a batch, resolve source ids, fetch by include=, write. The unit test passes a category array straight to migrateItem() and so never touches the WooCommerce read path, which is why a run reporting '0 records' looked identical to one that worked.",
+      "PlanFeatureGatingTest": "What a plan SELLS as opposed to how much volume it allows: a plan without metafields sends neither metafields nor brand tags but still sends the vendor; content entities lock on their own keys; blog posts follow the blogs key; a plan that never set the new keys stays unlimited; and the API refuses a locked content entity.",
+      "AllowanceResetTest": "That a monthly plan's allowance actually comes back: an older spend does not count against this period, a spend inside it still does, the pool resets the same way, the period is anchored to the merchant's own billing date, and a free shop gets a month too. NOTE: the first version of this suite passed while proving nothing, because created_at is not fillable and create() silently stamped every row with now() — backdating needs forceFill + saveQuietly.",
+      "RetrySweepTest": "'Retry failed items' as a FINITE sweep, which it was not: a pass resumes past its cursor instead of starting over; a record that fails again is not attempted twice in one sweep and the run still ENDS (the old exit condition was 'nothing is failed any more', which a systemic refusal never satisfies); a throttled chunk resumes at its start rather than being stepped over; and a chunk that never stops being throttled is eventually swept past.",
+      "GdprWebhookTest": "The three privacy webhooks Shopify requires. customers/redact really deletes the subject's mapping rows; a customer id is matched WHOLE, never by suffix (4191167 must not be erased for 191167); one shop's redaction cannot reach another's rows; an unsigned request is refused; an unknown shop is still a success; shop/redact purges everything. Asserted on the ROWS, because {ok:true} looks the same whether it erased anything or not.",
+      "ThroughputHardeningTest": "How FAST a big run goes, and whether it tells the truth when it does not — the counterpart to ScaleHardeningTest, which covers correctness. The self-starter runs a POOL and its slot leases hold within the window; no more workers start than there is work for; a denied Shopify scope is NAMED instead of reported as 'No id returned by Shopify'; a refusal costs one API call rather than four rounds of shedding; a refused collectionUpdate does not fall through to a duplicate create; Protected Customer Data denial is explained in words; an image with no generated sizes is asked about once, not once per product; and a run that came up short says so, unless a failed batch already explains it.",
+      "QueueSelfHealingTest": "The queue keeping itself alive: an empty queue starts nothing, only one worker starts per window however many pollers arrive, the self-starter can be switched off for supervisor hosts, failed jobs are re-queued without a command, a job that keeps failing is eventually left alone, and both admin endpoints work and require an admin.",
+      "PlanningPhaseTest": "Pinning every chunk's ids up front: chunks carry concrete ids before any of them runs; a record inserted mid-listing is not pinned twice; the plan cap holds during planning; a killed planner resumes rather than re-listing; nothing finalizes a half-planned run (advance() AND the finalizer directly); work starts before the catalogue is fully listed; a store that will not list ids is read page by page rather than treated as EMPTY; a too-high count is corrected; the watchdog revives a dead planner but leaves a working one alone; a planner that gives up still lets the run reach an end state.",
+      "DescriptionImageTest": "The images inside a description - the one part of a product that never migrated. Re-hosted and the HTML rewritten; the same image across many products uploaded ONCE; third-party hosts left alone; nothing happens unless the merchant opted in; an image Shopify refuses costs a warning not the product; a description with no images costs nothing; a data: URI is not mistaken for a file.",
+      "MigrationEstimateTest": "\"How long will this take?\" - and the two ways it could lie. A product is not costed the same as a coupon; more workers means less time but NOT a clean division; per-entity shares sum to the whole; a young run is not extrapolated from the quick entities at the front of the dependency order; a run with a real sample estimates from its OWN pace, so a slow store is quoted a longer time than a fast one with the same catalogue; progress ahead of a revised plan does not read as finished.",
+      "AdminEntityResetTest": "The support tool for \"let this merchant migrate it again\". `resync` leaves rows in the state that makes a re-run ADOPT what is already in Shopify (attempts=1, not 0 - zero means never attempted, which creates a duplicate); `forget` deletes them and SAYS it will duplicate. Scoped to one entity and one shop, refused while a migration is running, and the store detail shows the counts so the operator knows what they are about to reset."
     }
   },
   "secrets_location": {
@@ -530,7 +681,8 @@
   "key_files_to_read_first": [
     "CLAUDE.md — short guardrails",
     "SPECIFICATION.md — full architecture spec",
-    "DEPLOYMENT.md — Hostinger deployment steps + troubleshooting table",
+    "DEPLOYMENT-VPS.md — VPS runbook (Ubuntu 24.04 + Apache + MySQL 8 + Redis + supervisor pool), bare server to running app, deployed by git clone",
+    "DEPLOYMENT.md — Hostinger SHARED hosting steps + troubleshooting table",
     "APP-LISTING.md — Shopify App Store listing copy",
     "app/backend/app/Migration/Migrators/ProductMigrator.php — the most complex logic",
     "app/backend/routes/api.php — every endpoint",

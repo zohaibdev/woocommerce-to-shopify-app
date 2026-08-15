@@ -65,13 +65,20 @@ class StartMigrationJob implements ShouldQueue
             return;
         }
 
-        $migration->update(['status' => 'processing', 'started_at' => $migration->started_at ?? now()]);
+        $migration->update([
+            'status' => 'processing',
+            'started_at' => $migration->started_at ?? now(),
+            // Planning starts again from nothing below, so the run must not be
+            // allowed to finalize until PlanBatchesJob says so. A re-plan that
+            // left this set would let a half-planned run close itself the moment
+            // its first chunk finished.
+            'planned_at' => null,
+        ]);
 
         // Re-planning (a retry-failed run) must not stack a second set of batches on
         // top of the old ones — migration_items still guarantees idempotency.
         MigrationBatch::where('migration_id', $migration->id)->delete();
 
-        $configuredPerPage = (int) config('migration.per_page', 100);
         $ordered = $registry->order($migration->selected_entities);
         $shop = $migration->shop;
 
@@ -94,6 +101,20 @@ class StartMigrationJob implements ShouldQueue
         // One shared record budget for the whole run, drawn down entity by entity
         // below. Built once so the allocation is consistent across them.
         $pool = PlanPool::for($shop);
+
+        // Said once, up front, rather than leaving the merchant to notice that
+        // their custom fields never arrived. A silently reduced migration is the
+        // thing that makes people distrust a migration tool.
+        if (in_array('product', $migration->selected_entities ?? [], true) && ! $shop->planAllows('metafields')) {
+            MigrationRunner::log(
+                $migration->id,
+                'warning',
+                'product',
+                'Your '.($shop->currentPlan()?->name ?? 'current').' plan does not include metafields and brands, '
+                    .'so custom WooCommerce fields and brand data will not be copied. Everything else about each '
+                    .'product still migrates — upgrade and re-run to add them.',
+            );
+        }
 
         if ($pool->isActive()) {
             MigrationRunner::log(
@@ -165,7 +186,14 @@ class StartMigrationJob implements ShouldQueue
 
             MigrationEntity::updateOrCreate(
                 ['migration_id' => $migration->id, 'entity_type' => $entityType],
-                ['status' => $total > 0 ? 'processing' : 'completed', 'total_items' => $total],
+                [
+                    'status' => $total > 0 ? 'processing' : 'completed',
+                    'total_items' => $total,
+                    // Planning progress starts from zero on every (re-)plan; the
+                    // batch rows it refers to were just deleted above.
+                    'planned_items' => 0,
+                    'last_source_id' => null,
+                ],
             );
 
             MigrationRunner::log(
@@ -177,30 +205,16 @@ class StartMigrationJob implements ShouldQueue
                     : "Nothing to migrate for {$entityType}.",
             );
 
-            if ($total <= 0) {
-                continue;
-            }
-
-            // Never page wider than the plan allows — otherwise a 10-product plan
-            // would fetch (and migrate) a full 100-item page.
-            $perPage = min($configuredPerPage, $total);
-            $pages = (int) ceil($total / $perPage);
-
-            for ($page = 1; $page <= $pages; $page++) {
-                MigrationBatch::create([
-                    'migration_id' => $migration->id,
-                    'entity_type' => $entityType,
-                    'batch_number' => $page,
-                    'page' => $page,
-                    'per_page' => $perPage,
-                    'processed_offset' => 0,
-                    'status' => 'pending',
-                ]);
-            }
         }
 
-        // Batches were created in dependency order, so advancing by id preserves it.
-        MigrationRunner::advance($migration->id);
+        // Chunks are no longer created here. PlanBatchesJob walks each entity's
+        // ids and pins them to chunks in one continuous pass — see that job for
+        // why the old page-number addressing quietly lost records on a run long
+        // enough for the merchant to delete something. It creates the chunks in
+        // dependency order (the same order used above) and hands them to the
+        // runner as it goes, so work starts within seconds rather than waiting
+        // for the whole catalogue to be listed.
+        PlanBatchesJob::dispatch($migration->id);
     }
 
     /** Never leave a migration stranded in "pending" because planning blew up. */

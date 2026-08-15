@@ -1,7 +1,13 @@
-# Deploying Store Shift to Hostinger
+# Deploying Store Shift to Hostinger (shared hosting)
 
 Landing page: `https://shift-shop.webnday.com/`
 App: `https://shift-shop.webnday.com/app/`
+
+> **On a VPS with root? Use [DEPLOYMENT-VPS.md](DEPLOYMENT-VPS.md) instead.**
+> It covers Ubuntu 24.04 + Apache + MySQL 8 + Redis + a supervisor worker pool
+> from a bare server, and it deploys by `git clone` rather than by uploading a
+> zip. The difference that matters is the worker pool: a large catalogue takes an
+> afternoon there and overnight here.
 
 ---
 
@@ -199,9 +205,37 @@ cd ~/public_html/app/backend && php artisan migration:prune
 | Prune | `0 3 * * *` | `cd ~/public_html/app/backend && php artisan migration:prune` | Recommended |
 
 > Do **not** also add Laravel's `schedule:run` cron. `routes/console.php`
-> registers the watchdog on the scheduler, so running both would just start the
-> same command twice — harmless (it is idempotent) but pointless noise. Pick the
+> registers these on the scheduler, so running both would just start the same
+> command twice — harmless (they are idempotent) but pointless noise. Pick the
 > direct commands above.
+
+### 6.3.1 No worker cron possible? `queue:keepalive` every minute
+
+If the host will not give you a per-minute cron for `queue-workers.sh` — or
+disables `pgrep`/`nohup` — leave `QUEUE_AUTO_WORKER=true` and run this instead:
+
+```bash
+cd ~/public_html/app/backend && php artisan queue:keepalive
+```
+
+| Cron | Schedule | Required? |
+|---|---|---|
+| Keepalive | `* * * * *` | Only when you are NOT running `queue-workers.sh` or supervisor |
+
+It starts up to `QUEUE_AUTO_WORKERS` detached workers when there is queued work
+and free capacity, and does nothing otherwise (two queries).
+
+**Why every minute matters.** A self-started worker lives 55 seconds. The app
+also starts workers off ordinary API traffic, which covers the case where the
+merchant is watching the page — but migrations run for hours and merchants are
+explicitly told they may close the tab. Before this cron existed the only other
+heartbeat was the five-minute watchdog, so an unwatched run got **55 seconds of
+work out of every 300** — an 18% duty cycle that turned a 14-hour migration into
+a three-day one, with nothing anywhere explaining the slowdown.
+
+> ⚠️ Run **either** `queue-workers.sh`/supervisor **or** this — never both. Each
+> maintains its own pool, so together you get twice the workers you sized for.
+> Whenever a process manager is running, set `QUEUE_AUTO_WORKER=false`.
 
 ### 6.4 `retry_after` must exceed the job runtime ⚠️
 

@@ -71,7 +71,13 @@ export default function WooCommerceConnection() {
     }
   };
 
-  const canSave = storeUrl.trim() !== "" && consumerKey.trim() !== "" && consumerSecret.trim() !== "";
+  // Once credentials are stored, the URL alone is enough to save — the server
+  // keeps the key and secret it already has. Demanding all three meant a merchant
+  // fixing a typo in their store URL had to generate a whole new key pair in
+  // WordPress, because this form can never show them the secret it holds.
+  const canSave =
+    storeUrl.trim() !== "" &&
+    (!!connection || (consumerKey.trim() !== "" && consumerSecret.trim() !== ""));
 
   return (
     <Page title="Connect WooCommerce" backAction={{ content: "Home", url: "/" }}>
@@ -133,7 +139,7 @@ export default function WooCommerceConnection() {
               placeholder={connection?.consumer_key_masked ?? "ck_..."}
               helpText={
                 connection
-                  ? "Leave the key and secret blank and use Re-test to check the credentials already saved."
+                  ? "Leave blank to keep the key already saved — useful when you only need to correct the store URL."
                   : undefined
               }
               autoComplete="off"

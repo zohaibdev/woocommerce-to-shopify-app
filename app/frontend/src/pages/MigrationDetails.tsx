@@ -11,10 +11,12 @@ import {
   Banner,
   DataTable,
   Spinner,
+  Divider,
   Box,
 } from "@shopify/polaris";
 import { useParams } from "react-router-dom";
 import { api, type Migration, type MigrationItem, type MigrationLogEntry } from "../api/client";
+import { estimateLabel } from "../duration";
 
 const ACTIVE_STATES = ["pending", "processing", "paused"];
 
@@ -167,6 +169,41 @@ export default function MigrationDetails() {
               </Text>
               <Badge tone={STATUS_TONE[migration.status] ?? "info"}>{migration.status}</Badge>
             </InlineStack>
+
+            {/*
+              A run of any size takes hours, and a progress bar that barely moves
+              reads as broken rather than slow. This is the number that tells the
+              merchant whether to sit and watch or come back tomorrow — and once
+              the run has done enough work, it comes from the run's OWN pace, so
+              it already accounts for their host, their images and their plan.
+            */}
+            {migration.estimate && migration.estimate.seconds_remaining > 0 && (
+              <>
+                <Divider />
+                <InlineStack align="space-between" blockAlign="center">
+                  <BlockStack gap="050">
+                    <Text as="span" fontWeight="bold">
+                      {estimateLabel(
+                        migration.estimate.seconds_remaining,
+                        migration.estimate.basis,
+                      )}
+                    </Text>
+                    <Text as="span" tone="subdued" variant="bodySm">
+                      {migration.estimate.basis === "progress"
+                        ? migration.estimate.records_per_minute
+                          ? `Measured from this migration — currently about ${migration.estimate.records_per_minute} records a minute.`
+                          : "Measured from this migration's own pace."
+                        : "A rough figure — this will sharpen once the migration has been running a little longer."}
+                    </Text>
+                  </BlockStack>
+                  <Text as="span" tone="subdued" variant="bodySm">
+                    {migration.estimate.workers === 1
+                      ? "1 worker"
+                      : `${migration.estimate.workers} parallel workers`}
+                  </Text>
+                </InlineStack>
+              </>
+            )}
           </BlockStack>
         </Card>
 

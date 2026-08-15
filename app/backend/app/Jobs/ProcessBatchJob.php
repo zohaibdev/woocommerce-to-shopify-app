@@ -69,20 +69,20 @@ class ProcessBatchJob implements ShouldQueue
     /** How often progress counters are republished while a chunk runs. */
     private const COUNTER_SYNC_SECONDS = 1.0;
 
-    /**
-     * Biggest serialized page we are willing to park in the cache.
-     *
-     * This was 1MB, which sounds cautious until you notice that a Woo page of 100
-     * products with full meta_data is routinely several MB — so on exactly the
-     * catalogues the cache exists for, it never engaged once, and every 35-second
-     * resume re-downloaded the whole page. Laravel's database cache stores the
-     * value in a MEDIUMTEXT (16MB), so 8MB is comfortably inside what the column
-     * and max_allowed_packet will take.
-     */
-    private const MAX_CACHED_PAGE_BYTES = 8_000_000;
-
     /** Records sampled to estimate a page's serialized size — see cachePage(). */
     private const SIZE_SAMPLE = 3;
+
+    /**
+     * Migration ids already told that their pages are not being cached.
+     *
+     * Static, so one worker draining two hundred batches of the same run says it
+     * once rather than two hundred times. A per-process memory is exactly the
+     * right scope: it cannot depend on the cache, which in this particular case
+     * is the thing that may be broken.
+     *
+     * @var array<int, true>
+     */
+    private static array $cacheWarned = [];
 
     /**
      * How often the run's status is re-read while walking a chunk. Reading it per
@@ -482,7 +482,7 @@ class ProcessBatchJob implements ShouldQueue
             );
         }
 
-        $this->cachePage($key, $page);
+        $this->cachePage($key, $page, $migration);
 
         return $this->capToAllowance($page, $batch, $entity, $migration);
     }
@@ -615,7 +615,7 @@ class ProcessBatchJob implements ShouldQueue
      *
      * @param  array<int, array{id: int, item: array|null}>  $page
      */
-    private function cachePage(string $key, array $page): void
+    private function cachePage(string $key, array $page, StoreMigration $migration): void
     {
         $count = count($page);
 
@@ -625,13 +625,49 @@ class ProcessBatchJob implements ShouldQueue
             return;
         }
 
+        $limit = max(0, (int) config('migration.max_cached_page_bytes', 3_500_000));
+
         $sampleSize = min(self::SIZE_SAMPLE, $count);
         $sampleBytes = strlen((string) json_encode(array_slice($page, 0, $sampleSize)));
         $estimate = ($sampleBytes / $sampleSize) * $count;
 
-        if ($estimate <= self::MAX_CACHED_PAGE_BYTES) {
-            SafeCache::put($key, $page, now()->addHours(2));
+        // Either the page is too big for the store to hold, or the store refused
+        // it. Both are survivable — the page is simply fetched again — but both
+        // also mean every resume of every batch pays for a full page download,
+        // which on a big catalogue is the difference between hours. It used to
+        // happen in complete silence, so the operator had no way to connect a
+        // slow migration to a `max_allowed_packet` they could have raised.
+        if ($estimate > $limit) {
+            $this->noteUncachedPages(
+                $migration,
+                "a page of {$count} records is larger than the ".number_format($limit).'-byte cache limit',
+            );
+
+            return;
         }
+
+        if (! SafeCache::put($key, $page, now()->addHours(2))) {
+            $this->noteUncachedPages($migration, 'the cache store rejected the write');
+        }
+    }
+
+    /** Said once per run per worker — see $cacheWarned. */
+    private function noteUncachedPages(StoreMigration $migration, string $reason): void
+    {
+        if (isset(self::$cacheWarned[$migration->id])) {
+            return;
+        }
+
+        self::$cacheWarned[$migration->id] = true;
+
+        MigrationRunner::log(
+            $migration->id,
+            'info',
+            null,
+            "WooCommerce pages are not being cached between steps because {$reason}. Nothing is lost, but each "
+                .'step re-reads its page from your store, so the migration runs slower. Raising the database '
+                ."server's max_allowed_packet, or lowering MIGRATION_PER_PAGE, will fix it.",
+        );
     }
 
     private function forgetPage(MigrationBatch $batch): void

@@ -111,20 +111,25 @@ class CustomerMigrator extends AbstractMigrator
         );
     }
 
-    /** @return array{0: string|null, 1: array} [shopifyId, errors] */
-    private function create(StoreMigration $migration, array $input): array
+    /** @return array{0: string|null, 1: array}|MigrationItemResult [shopifyId, errors], or a verdict */
+    private function create(StoreMigration $migration, array $input): array|MigrationItemResult
     {
         $shopify = $this->shopify($migration);
         $body = $shopify->graphql(self::CREATE_MUTATION, ['input' => $input]);
 
-        $errors = $shopify->userErrors($body, 'customerCreate');
-
-        // Surface top-level errors too (e.g. Protected Customer Data not approved).
-        if (empty($errors)) {
-            $errors = $shopify->topLevelErrors($body);
+        // Customers are THE entity Protected Customer Data gates, and until that
+        // approval lands Shopify denies every one of them at the top level. That
+        // used to arrive as raw JSON after three pointless retries that dropped
+        // the phone, then the addresses, then the tags — none of which had
+        // anything to do with it.
+        if ($fatal = $this->fatalShopifyError($shopify, $body)) {
+            return MigrationItemResult::failed($fatal);
         }
 
-        return [data_get($body, 'data.customerCreate.customer.id'), $errors];
+        return [
+            data_get($body, 'data.customerCreate.customer.id'),
+            $shopify->userErrors($body, 'customerCreate'),
+        ];
     }
 
 

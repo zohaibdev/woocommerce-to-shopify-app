@@ -62,12 +62,14 @@ class CategoryMigrator extends AbstractMigrator
 
     protected function doMigrate(StoreMigration $migration, array $wooItem, ?string $existingShopifyId = null): MigrationItemResult
     {
+        $warnings = [];
+
         $input = [
             'title' => $wooItem['name'] ?? 'Untitled',
             // Keeps /product-category/shoes as /collections/shoes, so the
             // merchant's old category URLs can be redirected one-to-one.
             'handle' => $this->handleFromSlug($wooItem['slug'] ?? null),
-            'descriptionHtml' => $wooItem['description'] ?? '',
+            'descriptionHtml' => $this->rehostDescription($migration, $wooItem['description'] ?? '', $warnings),
             // A term carries no meta_data in the WooCommerce REST response, so
             // this only finds anything when Yoast exposes yoast_head_json —
             // see SeoMeta. Empty is normal and harmless.
@@ -91,17 +93,23 @@ class CategoryMigrator extends AbstractMigrator
             function (array $attempt) use ($migration, $existingShopifyId) {
                 $id = $this->write($migration, $attempt, $existingShopifyId);
 
+                // Shopify refused the request itself — final answer; shedding the
+                // image or the description cannot change a scope problem.
+                if ($id instanceof MigrationItemResult) {
+                    return $id;
+                }
+
                 return is_array($id) ? [null, $id] : [$id, []];
             },
             $input,
             // `handle` is shed like the rest: Shopify rejects one it has already
             // given another collection, and that is worth a URL, not a collection.
             ['image', 'descriptionHtml', 'seo', 'handle'],
-        );
+        )->withWarnings($warnings);
     }
 
     /** Update the existing collection when we have one; recreate if it's gone. */
-    private function write(StoreMigration $migration, array $input, ?string $existingShopifyId): string|array|null
+    private function write(StoreMigration $migration, array $input, ?string $existingShopifyId): MigrationItemResult|string|array|null
     {
         if (! $existingShopifyId) {
             return $this->run($migration, self::CREATE_MUTATION, 'collectionCreate', $input);
@@ -109,16 +117,31 @@ class CategoryMigrator extends AbstractMigrator
 
         $id = $this->run($migration, self::UPDATE_MUTATION, 'collectionUpdate', $input + ['id' => $existingShopifyId]);
 
-        return $id === null
-            ? $this->run($migration, self::CREATE_MUTATION, 'collectionCreate', $input)
-            : $id;
+        // Only a genuine "that collection is gone" falls through to a create.
+        // Anything else — including a refusal that used to read as null — must
+        // not, or a store whose token lost a scope mid-run would answer every
+        // update with nothing and get a second copy of every collection.
+        if ($id !== null) {
+            return $id;
+        }
+
+        return $this->run($migration, self::CREATE_MUTATION, 'collectionCreate', $input);
     }
 
-    /** Returns gid on success, errors array on real failure, null if the target collection is gone. */
-    private function run(StoreMigration $migration, string $mutation, string $field, array $input): string|array|null
+    /**
+     * Returns gid on success, errors array on real failure, null if the target
+     * collection is gone, or a finished failure result when Shopify refused the
+     * request outright (a missing scope, an expired token, an outage).
+     */
+    private function run(StoreMigration $migration, string $mutation, string $field, array $input): MigrationItemResult|string|array|null
     {
         $shopify = $this->shopify($migration);
         $body = $shopify->graphql($mutation, ['input' => $input]);
+
+        if ($fatal = $this->fatalShopifyError($shopify, $body)) {
+            return MigrationItemResult::failed($fatal);
+        }
+
         $errors = $shopify->userErrors($body, $field);
 
         if (! empty($errors)) {
