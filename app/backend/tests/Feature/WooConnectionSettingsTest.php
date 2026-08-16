@@ -150,4 +150,23 @@ class WooConnectionSettingsTest extends TestCase
         // app produces. The client reads `error`, so it has to be there.
         $this->assertStringContainsString('401', $response->json('error'));
     }
+
+    public function test_no_stored_connection_is_reported_as_literal_null(): void
+    {
+        $response = $this->withHeaders(['X-Shop-Domain' => $this->shop->shopify_domain])
+            ->getJson('/api/woocommerce/connection');
+
+        $response->assertOk();
+
+        // `{}` is NOT an acceptable answer here, and it is what
+        // `response()->json(null)` sends — Symfony's JsonResponse swaps a null
+        // payload for an empty ArrayObject. An empty object is truthy, so the
+        // client took it for a real connection, read `store_url` off it, got
+        // undefined and crashed the page. That locked out precisely the merchants
+        // with no connection yet: the only ones who need this form.
+        $this->assertSame('null', $response->getContent());
+        // Decoded here rather than through `$response->json()`, which asserts the
+        // payload is an array and so cannot express "this endpoint answered null".
+        $this->assertNull(json_decode($response->getContent(), true));
+    }
 }

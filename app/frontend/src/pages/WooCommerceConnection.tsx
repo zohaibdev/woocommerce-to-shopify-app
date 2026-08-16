@@ -29,7 +29,12 @@ export default function WooCommerceConnection() {
     api
       .getWooConnection()
       .then((c) => {
-        if (!c) return;
+        // `store_url`, not just `c`. "No connection yet" used to arrive as an
+        // empty object rather than null, and an empty object is truthy — so this
+        // put `undefined` into a state field the render then called .trim() on,
+        // and the page every unconnected merchant needs crashed before they could
+        // type anything into it.
+        if (!c?.store_url) return;
         setConnection(c);
         // Prefilled so re-saving credentials does not mean retyping the URL.
         setStoreUrl(c.store_url);

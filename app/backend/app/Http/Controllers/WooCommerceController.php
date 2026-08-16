@@ -124,7 +124,14 @@ class WooCommerceController extends Controller
         $connection = $shop->woocommerceConnection;
 
         if (! $connection) {
-            return response()->json(null);
+            // The literal `null`, spelled out. `response()->json(null)` does NOT
+            // send it: Symfony's JsonResponse does `$data ??= new \ArrayObject()`,
+            // so a null payload goes out as `{}`. The client read that empty
+            // object as a real connection, took `store_url` off it (undefined) and
+            // crashed the whole page — meaning every merchant who had not yet
+            // connected a store, i.e. exactly the people this form exists for,
+            // could never reach it.
+            return new JsonResponse('null', 200, [], 0, true);
         }
 
         return response()->json($this->present($connection));
