@@ -5,7 +5,7 @@ For a server you have root on. If you are on Hostinger **shared** hosting, use
 workers are run, which is the single biggest factor in how long a large
 migration takes.
 
-Target: `https://shift-shop.webnday.com/` (landing) and `/app/` (the app).
+Target: `https://shiftshop.tech/` (landing) and `/app/` (the app).
 
 ---
 
@@ -41,7 +41,7 @@ Download it. You will restore it in step 9.
 
 ### 0.3 DNS
 
-Point `shift-shop.webnday.com` (A record) at the VPS IP. Do this **first** —
+Point `shiftshop.tech` (A record) at the VPS IP. Do this **first** —
 certbot in step 8 verifies over HTTP and will fail until DNS has propagated.
 Keep the TTL low (300s) until you have finished, so a rollback is quick.
 
@@ -223,7 +223,7 @@ The values that must be right:
 APP_ENV=production
 APP_DEBUG=false
 APP_KEY=base64:...            # ← FROM THE OLD SERVER (step 0.1)
-APP_URL=https://shift-shop.webnday.com/app
+APP_URL=https://shiftshop.tech/app
 
 DB_CONNECTION=mysql
 DB_HOST=127.0.0.1
@@ -246,7 +246,7 @@ MIGRATION_MAX_CONCURRENCY=8
 
 SHOPIFY_API_KEY=...
 SHOPIFY_API_SECRET=...
-SHOPIFY_APP_URL=https://shift-shop.webnday.com/app
+SHOPIFY_APP_URL=https://shiftshop.tech/app
 SHOPIFY_BILLING_TEST=false    # ← merchants are never charged while this is true
 
 ADMIN_EMAIL=you@example.com
@@ -288,7 +288,7 @@ sudo chmod 600 app/backend/.env && sudo chown deploy:www-data app/backend/.env
 
 ```apache
 <VirtualHost *:80>
-    ServerName shift-shop.webnday.com
+    ServerName shiftshop.tech
     DocumentRoot /var/www/store-shift
 
     <Directory /var/www/store-shift>
@@ -336,7 +336,7 @@ sudo chmod 600 app/backend/.env && sudo chown deploy:www-data app/backend/.env
 
 ```bash
 sudo a2ensite store-shift && sudo apache2ctl configtest && sudo systemctl reload apache2
-sudo certbot --apache -d shift-shop.webnday.com
+sudo certbot --apache -d shiftshop.tech
 ```
 
 Certbot writes the `:443` vhost and a redirect. Choose **"redirect HTTP to
@@ -444,16 +444,16 @@ out.
 ## 12. Verify
 
 ```bash
-curl -I https://shift-shop.webnday.com/           # 200  landing
-curl -I https://shift-shop.webnday.com/app/       # 200  SPA
-curl -I https://shift-shop.webnday.com/app/admin  # 200  admin login
+curl -I https://shiftshop.tech/           # 200  landing
+curl -I https://shiftshop.tech/app/       # 200  SPA
+curl -I https://shiftshop.tech/app/admin  # 200  admin login
 
 # every one of these MUST be 403 or 404 — never 200
-curl -I https://shift-shop.webnday.com/app/backend/.env
-curl -I https://shift-shop.webnday.com/app/backend/composer.json
-curl -I https://shift-shop.webnday.com/.git/config
-curl -I https://shift-shop.webnday.com/CLAUDE.md
-curl -I https://shift-shop.webnday.com/deploy/queue-workers.sh
+curl -I https://shiftshop.tech/app/backend/.env
+curl -I https://shiftshop.tech/app/backend/composer.json
+curl -I https://shiftshop.tech/.git/config
+curl -I https://shiftshop.tech/CLAUDE.md
+curl -I https://shiftshop.tech/deploy/queue-workers.sh
 ```
 
 End to end:
@@ -469,6 +469,26 @@ one thing that cannot be checked from a browser.
 
 Then open `/app/admin` → the overview shows **pending jobs**, **failed jobs** and
 the worker-pool settings it is actually running with.
+
+---
+
+## 12.1 One command that checks everything
+
+```bash
+sudo cp /var/www/store-shift/deploy/healthcheck.sh /usr/local/bin/ss-health && sudo chmod +x /usr/local/bin/ss-health
+```
+
+From then on, after every deploy and any time something looks wrong:
+
+```bash
+sudo ss-health
+```
+
+It checks the five services, the supervisor worker pool, both crons,
+`storage` permissions, `QUEUE_AUTO_WORKER`, `retry_after`, queue depth, failed
+jobs, stalled batches, the three public URLs, the five paths that must **not** be
+public, and disk/RAM. Exit code is non-zero if anything failed, so it also works
+from a monitoring cron.
 
 ---
 

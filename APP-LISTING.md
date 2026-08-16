@@ -26,7 +26,7 @@ the app (`#2d3561` → `#0f7b6c`).
 
 ### App URL
 ```
-https://shift-shop.webnday.com/app/api/auth
+https://shiftshop.tech/app/api/auth
 ```
 
 ### Preferred app category
@@ -145,12 +145,12 @@ Minimum 3, 1600 × 900 px, taken inside the Shopify admin (embedded).
 | Field | Value |
 |---|---|
 | Support email | `support@webnday.com` *(set this up before submitting)* |
-| Support / help URL | `https://shift-shop.webnday.com/contact/` |
-| Privacy policy URL | `https://shift-shop.webnday.com/privacy/` ✅ live |
-| Terms of service URL | `https://shift-shop.webnday.com/terms/` ✅ live |
-| Refund policy URL | `https://shift-shop.webnday.com/refund/` ✅ live |
-| Documentation URL | `https://shift-shop.webnday.com/developers/` ✅ live |
-| FAQ URL | `https://shift-shop.webnday.com/#faq` |
+| Support / help URL | `https://shiftshop.tech/contact/` |
+| Privacy policy URL | `https://shiftshop.tech/privacy/` ✅ live |
+| Terms of service URL | `https://shiftshop.tech/terms/` ✅ live |
+| Refund policy URL | `https://shiftshop.tech/refund/` ✅ live |
+| Documentation URL | `https://shiftshop.tech/developers/` ✅ live |
+| FAQ URL | `https://shiftshop.tech/#faq` |
 
 ---
 

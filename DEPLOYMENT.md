@@ -1,7 +1,7 @@
 # Deploying Store Shift to Hostinger (shared hosting)
 
-Landing page: `https://shift-shop.webnday.com/`
-App: `https://shift-shop.webnday.com/app/`
+Landing page: `https://shiftshop.tech/`
+App: `https://shiftshop.tech/app/`
 
 > **On a VPS with root? Use [DEPLOYMENT-VPS.md](DEPLOYMENT-VPS.md) instead.**
 > It covers Ubuntu 24.04 + Apache + MySQL 8 + Redis + a supervisor worker pool
@@ -75,8 +75,8 @@ chmod -R 775 storage bootstrap/cache
 Key values (already set in `.env.production`):
 
 ```ini
-APP_URL=https://shift-shop.webnday.com/app
-SHOPIFY_APP_URL=https://shift-shop.webnday.com/app
+APP_URL=https://shiftshop.tech/app
+SHOPIFY_APP_URL=https://shiftshop.tech/app
 APP_DEBUG=false
 DB_DATABASE=ss_main
 DB_USERNAME=ss_root
@@ -251,15 +251,15 @@ Never set `DB_QUEUE_RETRY_AFTER` below ~600.
 
 | Field | Value |
 |---|---|
-| App URL | `https://shift-shop.webnday.com/app/api/auth` |
-| Allowed redirection URL | `https://shift-shop.webnday.com/app/api/auth/callback` |
+| App URL | `https://shiftshop.tech/app/api/auth` |
+| Allowed redirection URL | `https://shiftshop.tech/app/api/auth/callback` |
 
 GDPR webhooks:
 
 ```
-https://shift-shop.webnday.com/app/api/webhooks/customers-data-request
-https://shift-shop.webnday.com/app/api/webhooks/customers-redact
-https://shift-shop.webnday.com/app/api/webhooks/shop-redact
+https://shiftshop.tech/app/api/webhooks/customers-data-request
+https://shiftshop.tech/app/api/webhooks/customers-redact
+https://shiftshop.tech/app/api/webhooks/shop-redact
 ```
 
 ---
@@ -267,24 +267,24 @@ https://shift-shop.webnday.com/app/api/webhooks/shop-redact
 ## 8. Verify
 
 ```bash
-curl -I https://shift-shop.webnday.com/                      # 200  landing page
-curl -I https://shift-shop.webnday.com/app/                  # 200  SPA
-curl -I https://shift-shop.webnday.com/app/assets/index-Be5bzpko.js   # 200
-curl -I https://shift-shop.webnday.com/app/admin             # 200  admin login
-curl -i  "https://shift-shop.webnday.com/app/api/auth?shop=YOUR-STORE.myshopify.com"  # 302 → shopify
+curl -I https://shiftshop.tech/                      # 200  landing page
+curl -I https://shiftshop.tech/app/                  # 200  SPA
+curl -I https://shiftshop.tech/app/assets/index-Be5bzpko.js   # 200
+curl -I https://shiftshop.tech/app/admin             # 200  admin login
+curl -i  "https://shiftshop.tech/app/api/auth?shop=YOUR-STORE.myshopify.com"  # 302 → shopify
 
 # these MUST NOT return 200
-curl -I https://shift-shop.webnday.com/app/backend/.env
-curl -I https://shift-shop.webnday.com/app/backend/composer.json
+curl -I https://shiftshop.tech/app/backend/.env
+curl -I https://shiftshop.tech/app/backend/composer.json
 ```
 
 Install URL:
 
 ```
-https://shift-shop.webnday.com/app/api/auth?shop=YOUR-STORE.myshopify.com
+https://shiftshop.tech/app/api/auth?shop=YOUR-STORE.myshopify.com
 ```
 
-Admin panel: `https://shift-shop.webnday.com/app/admin`
+Admin panel: `https://shiftshop.tech/app/admin`
 
 ---
 

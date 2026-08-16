@@ -5,10 +5,10 @@
   "project": {
     "name": "Store Shift",
     "what_it_is": "Embedded Shopify app that migrates a merchant's WooCommerce store data into their Shopify store.",
-    "production_url": "https://shift-shop.webnday.com",
-    "app_url": "https://shift-shop.webnday.com/app",
-    "admin_url": "https://shift-shop.webnday.com/app/admin",
-    "landing_page": "https://shift-shop.webnday.com/ (static index.html, not React)",
+    "production_url": "https://shiftshop.tech",
+    "app_url": "https://shiftshop.tech/app",
+    "admin_url": "https://shiftshop.tech/app/admin",
+    "landing_page": "https://shiftshop.tech/ (static index.html, not React)",
     "status": "Deployed to production. Not yet published on the Shopify App Store (unlisted).",
     "local_path": "C:/Users/Zohaib/Documents/Edits/store-shift",
     "git_remote": "https://github.com/zohaibdev/store-shift.git"
