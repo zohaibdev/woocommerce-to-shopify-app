@@ -2,7 +2,17 @@
 
 client_id = "1462f5d83148f24e32ddf349001f529a"
 name = "Store Shift"
-application_url = "https://shiftshop.tech/app/api/auth"
+# The app's ROOT, not its OAuth endpoint.
+#
+# This used to be ".../app/api/auth", which is where the legacy install flow
+# wanted merchants sent. With `use_legacy_install_flow = false` (below) Shopify
+# grants the scopes itself and loads the app here instead — and, more to the
+# point, the admin derives the in-app path by stripping this prefix off the
+# current URL. Pointed at /app/api/auth, a client-side move to /app/woocommerce
+# matched no prefix, so Shopify's own router computed `undefined` and threw
+# "Cannot read properties of undefined (reading 'trim')" from inside the admin
+# bundle. First load worked; every nav click after it crashed the page.
+application_url = "https://shiftshop.tech/app"
 embedded = true
 
 [webhooks]

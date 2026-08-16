@@ -251,8 +251,18 @@ Never set `DB_QUEUE_RETRY_AFTER` below ~600.
 
 | Field | Value |
 |---|---|
-| App URL | `https://shiftshop.tech/app/api/auth` |
+| App URL | `https://shiftshop.tech/app` |
 | Allowed redirection URL | `https://shiftshop.tech/app/api/auth/callback` |
+
+> ⚠️ **App URL is the app ROOT, not `/api/auth`.** Sending it to the OAuth
+> endpoint is the old install-flow habit, and it breaks client-side navigation:
+> the Shopify admin derives the in-app path by stripping the App URL off the
+> current URL, so a move to `/app/woocommerce` matched nothing, the admin's own
+> router computed `undefined`, and the page died with
+> "Cannot read properties of undefined (reading 'trim')" — thrown from inside
+> Shopify's bundle, not ours. The first load looked fine; every nav click after
+> it crashed. Managed install (`use_legacy_install_flow = false`) does the scope
+> grant on its own and simply loads the app here.
 
 GDPR webhooks:
 
