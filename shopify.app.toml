@@ -1,0 +1,38 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "1462f5d83148f24e32ddf349001f529a"
+name = "Store Shift"
+application_url = "https://shiftshop.tech/app/api/auth"
+embedded = true
+
+[webhooks]
+api_version = "2025-10"
+
+  # The three mandatory compliance webhooks. Shopify requires all of them before
+  # an app can be listed, and they cannot be registered through the API — they
+  # only exist here (or in the Partner Dashboard's Configuration page).
+  #
+  # Handled by App\Http\Controllers\WebhookController, which HMAC-verifies every
+  # request. The paths must stay in step with routes/api.php.
+  [webhooks.privacy_compliance]
+  customer_data_request_url = "https://shiftshop.tech/app/api/webhooks/customers-data-request"
+  customer_deletion_url = "https://shiftshop.tech/app/api/webhooks/customers-redact"
+  shop_deletion_url = "https://shiftshop.tech/app/api/webhooks/shop-redact"
+
+  # DO NOT add app/uninstalled here.
+  #
+  # A subscription declared in this file is APP-level; App\Services\
+  # ShopifyWebhookRegistrar already creates a SHOP-level one per install (run
+  # `php artisan shopify:sync-webhooks`). Declaring both means Shopify delivers
+  # the same uninstall twice. The registrar is the one under test
+  # (WebhookRegistrarTest) and the one that updates a stale callback URL after a
+  # domain change, so it stays the owner of that topic.
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_customers,write_customers,read_discounts,write_discounts,write_inventory,read_inventory,write_locations,read_locations,read_orders,write_orders,read_products,write_products,read_content,write_content"
+optional_scopes = [ ]
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = [ "https://shiftshop.tech/app/api/auth/callback" ]

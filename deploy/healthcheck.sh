@@ -86,12 +86,54 @@ echo
 echo "--- App ---"
 cd "$APP" || exit 1
 
-[ -f .env ] && g ".env present" || r ".env MISSING"
-
-if sudo -u www-data test -w storage 2>/dev/null; then
-    g "storage writable by www-data"
+if [ ! -f .env ]; then
+    r ".env MISSING"
+elif sudo -u www-data test -r .env; then
+    g ".env present and readable by www-data"
 else
-    r "storage NOT writable by www-data — every request will 500"
+    r ".env is NOT readable by www-data (probably chmod 600 — it needs 640)"
+    printf '         fix: sudo chown deploy:www-data %s/.env && sudo chmod 640 %s/.env\n' "$APP" "$APP"
+fi
+
+# The check above catches the cause; this one catches the SYMPTOM, including the
+# case where the config cache was built while .env was unreadable and now holds
+# empty values that no permission fix alone will clear.
+#
+# It is worth its own line because the failure is so quiet: Laravel boots, pages
+# render, and the only outward sign is every merchant being told "Your session
+# expired" — because SHOPIFY_API_SECRET was empty, so every App Bridge token
+# failed its signature check.
+CFG=$(sudo -u www-data HOME=/tmp php artisan tinker --execute="echo config('services.shopify.api_key').'|'.config('services.shopify.app_url').'|'.config('app.url');" 2>/dev/null | tr -d '[:space:]')
+CFG_KEY=${CFG%%|*}
+CFG_URL=${CFG##*|}
+
+if [ -n "$CFG_KEY" ] && [ "$CFG_URL" != "http://localhost" ]; then
+    g "config resolves (app.url=$CFG_URL)"
+else
+    r "config is EMPTY — shopify api_key='$CFG_KEY', app.url='$CFG_URL'"
+    printf '         fix: sudo -u www-data HOME=/tmp php artisan config:clear && sudo -u www-data HOME=/tmp php artisan config:cache\n'
+fi
+
+# Testing the top directory is not enough. The usual failure is a root-owned
+# file INSIDE storage, left behind by running `php artisan` as root — the
+# directory is writable, the log file it has to append to is not.
+STORAGE_BAD=""
+for d in storage/logs storage/framework/cache storage/framework/views storage/framework/sessions bootstrap/cache; do
+    [ -d "$d" ] || continue
+    if ! sudo -u www-data test -w "$d" 2>/dev/null; then
+        STORAGE_BAD="$STORAGE_BAD $d"
+        continue
+    fi
+    # Root-owned files inside a writable directory still break appends.
+    BADFILES=$(find "$d" ! -user www-data 2>/dev/null | head -3)
+    [ -n "$BADFILES" ] && STORAGE_BAD="$STORAGE_BAD $d(files)"
+done
+
+if [ -z "$STORAGE_BAD" ]; then
+    g "storage + bootstrap/cache writable by www-data"
+else
+    r "NOT writable by www-data:$STORAGE_BAD — every request will 500"
+    printf '         fix: sudo chown -R www-data:www-data %s/storage %s/bootstrap/cache\n' "$APP" "$APP"
 fi
 
 if grep -q '^QUEUE_AUTO_WORKER=false' .env 2>/dev/null; then
@@ -102,11 +144,19 @@ fi
 
 # retry_after below a job's own timeout is the worst bug this engine has had:
 # the queue declares a live batch dead and runs a second copy of it.
-RETRY=$(php -r '$e=parse_ini_file(".env"); echo $e["REDIS_QUEUE_RETRY_AFTER"] ?? $e["DB_QUEUE_RETRY_AFTER"] ?? 0;' 2>/dev/null)
+#
+# Asked of LARAVEL, not of .env. Parsing .env here was wrong twice over: a
+# password containing `;` or `#` breaks INI parsing outright (which is how this
+# reported a confident "0"), and a value absent from .env is not absent from the
+# app — the config default applies. Only the merged config for the driver
+# actually in use is worth checking.
+RETRY=$(php artisan tinker --execute="echo (int) config('queue.connections.'.config('queue.default').'.retry_after');" 2>/dev/null | tr -dc '0-9')
+DRIVER=$(php artisan tinker --execute="echo config('queue.default');" 2>/dev/null | tr -dc 'a-z')
+
 if [ "${RETRY:-0}" -ge 600 ] 2>/dev/null; then
-    g "queue retry_after = ${RETRY}s"
+    g "queue retry_after = ${RETRY}s (driver: ${DRIVER:-?})"
 else
-    r "queue retry_after = ${RETRY:-unset}s — must be >= 600 or a running batch gets a second worker"
+    r "queue retry_after = ${RETRY:-unknown}s on driver '${DRIVER:-?}' — must be >= 600 or a running batch gets a second worker"
 fi
 
 echo

@@ -277,8 +277,17 @@ sudo find . -type f -exec chmod 644 {} \;
 # only these two need to be writable by the web/worker user
 sudo chown -R www-data:www-data app/backend/storage app/backend/bootstrap/cache
 sudo chmod -R 775 app/backend/storage app/backend/bootstrap/cache
-sudo chmod 600 app/backend/.env && sudo chown deploy:www-data app/backend/.env
+sudo chown deploy:www-data app/backend/.env && sudo chmod 640 app/backend/.env
 ```
+
+> ⚠️ **640, not 600.** PHP-FPM runs as `www-data`, so `www-data` has to be able to
+> READ `.env`. At 600 only the owner can, and the failure is silent and
+> bewildering: Laravel boots perfectly, `config('app.url')` quietly falls back to
+> `http://localhost`, and `SHOPIFY_API_KEY` and `SHOPIFY_API_SECRET` come back
+> empty — so every App Bridge session token fails its signature check and the
+> merchant sees "Your session expired. Reload the page to continue." on a server
+> where nothing is actually broken. 640 keeps it unreadable to everyone else, and
+> Apache denies the whole directory anyway (step 8).
 
 ---
 
