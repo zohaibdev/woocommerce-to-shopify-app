@@ -67,10 +67,14 @@ class ArticleMigrator extends AbstractMigrator
      * had nothing to read and every migrated post arrived with no featured
      * image — silently, because a post with no image is perfectly valid.
      *
-     * It is scoped to `wp:featuredmedia` rather than a bare `_embed=1`, which
-     * would also drag every author and term object into each page.
+     * `author` is embedded for the same reason: the post carries only a numeric
+     * author ID, and Shopify's ArticleCreateInput requires a non-null `author`
+     * with a name. Without this every article in the store was rejected outright.
+     *
+     * It is scoped to these two relations rather than a bare `_embed=1`, which
+     * would also drag every term object into each page.
      */
-    private const QUERY = ['status' => 'publish', '_embed' => 'wp:featuredmedia'];
+    private const QUERY = ['status' => 'publish', '_embed' => 'author,wp:featuredmedia'];
 
     public function entityType(): string
     {
@@ -112,6 +116,8 @@ class ArticleMigrator extends AbstractMigrator
         $input = array_filter([
             'blogId' => $blogId,
             'title' => trim((string) data_get($woo, 'title.rendered', '')) ?: 'Untitled',
+            // REQUIRED by Shopify, and not shed-able — see author().
+            'author' => ['name' => $this->author($migration, $woo)],
             'handle' => $this->handleFromSlug($woo['slug'] ?? null),
             // A blog post is mostly images. Left pointing at WordPress they break
             // the day the old site goes away, which is exactly what this app is
@@ -277,6 +283,43 @@ class ArticleMigrator extends AbstractMigrator
             'date' => $c['date_gmt'] ?? ($c['date'] ?? null),
             'content' => trim(strip_tags((string) data_get($c, 'content.rendered', ''))),
         ]))->values()->all();
+    }
+
+    /**
+     * The article's byline. NEVER empty.
+     *
+     * `ArticleCreateInput.author` is `ArticleAuthorInput!` — Shopify rejects the
+     * whole mutation without it ("Expected value to not be null"), so omitting it
+     * did not cost a byline, it cost every single blog post in the store.
+     *
+     * It cannot be shed either: dropping it just reproduces the same rejection.
+     * That is why this falls all the way through to a value that always exists
+     * rather than returning null and letting the write fail.
+     *
+     * WordPress gives the post an author ID only, so the name comes from the
+     * embedded author object (see QUERY). Hosts that hide the users endpoint
+     * return the post with no `_embedded.author`, which is why the store name is
+     * the next choice — a byline the merchant's own readers will recognise.
+     */
+    private function author(StoreMigration $migration, array $woo): string
+    {
+        $candidates = [
+            data_get($woo, '_embedded.author.0.name'),
+            $migration->shop?->name,
+            // A store with no name recorded is a broken install, not a broken
+            // post — still not a reason to lose the merchant's writing.
+            'Admin',
+        ];
+
+        foreach ($candidates as $name) {
+            $name = trim((string) $name);
+
+            if ($name !== '') {
+                return mb_substr($name, 0, 255);
+            }
+        }
+
+        return 'Admin';
     }
 
     /** Featured image, when WordPress embedded it in the response. */

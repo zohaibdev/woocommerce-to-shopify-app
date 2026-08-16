@@ -301,11 +301,18 @@ class ContentMigratorsTest extends TestCase
 
         (new ArticleMigrator())->fetchBatch($conn, 1, 10);
 
+        $url = urldecode($urls[0]);
+
         // A plain wp/v2/posts response carries `featured_media` as a bare
         // ATTACHMENT ID, never a URL — so without asking WordPress to embed the
         // media, image() had nothing to read and EVERY migrated post arrived with
         // no featured image. Silently, because a post without one is still valid.
-        $this->assertStringContainsString('_embed=wp', urldecode($urls[0]));
+        $this->assertStringContainsString('wp:featuredmedia', $url);
+
+        // The post carries the author as a numeric ID too, and Shopify demands a
+        // non-null author name — so this one is not cosmetic: without it every
+        // article was rejected outright.
+        $this->assertStringContainsString('author', $url);
     }
 
     /** @test */
@@ -341,6 +348,67 @@ class ContentMigratorsTest extends TestCase
             $captured['article']['image']['url'],
         );
         $this->assertSame('The new warehouse', $captured['article']['image']['altText']);
+    }
+
+    /** @test */
+    public function the_wordpress_author_becomes_the_shopify_byline(): void
+    {
+        $migration = $this->migration();
+
+        MigrationItem::create([
+            'migration_id' => $migration->id,
+            'shop_id' => $migration->shop_id,
+            'entity_type' => 'blog',
+            'woocommerce_id' => 20,
+            'shopify_id' => 'gid://shopify/Blog/500',
+            'status' => 'success',
+        ]);
+
+        $captured = null;
+        $this->capture($captured, 'articleCreate', 'article');
+
+        (new ArticleMigrator())->migrateItem($migration, [
+            'id' => 32,
+            'title' => ['rendered' => 'Written By Someone'],
+            'content' => ['rendered' => '<p>Words.</p>'],
+            'categories' => [20],
+            '_embedded' => ['author' => [['name' => 'Jane Baker']]],
+        ]);
+
+        $this->assertSame('Jane Baker', $captured['article']['author']['name']);
+    }
+
+    /** @test */
+    public function a_post_with_no_embedded_author_still_gets_a_byline(): void
+    {
+        $migration = $this->migration();
+        $migration->shop->update(['name' => 'The Corner Shop']);
+
+        MigrationItem::create([
+            'migration_id' => $migration->id,
+            'shop_id' => $migration->shop_id,
+            'entity_type' => 'blog',
+            'woocommerce_id' => 20,
+            'shopify_id' => 'gid://shopify/Blog/500',
+            'status' => 'success',
+        ]);
+
+        $captured = null;
+        $this->capture($captured, 'articleCreate', 'article');
+
+        // Plenty of hosts hide wp/v2/users, so the post comes back with no
+        // `_embedded.author` at all. Shopify's `author` is non-null and cannot be
+        // shed — leaving it out rejected EVERY article in the store with
+        // "Expected value to not be null", so there has to be a fallback.
+        $result = (new ArticleMigrator())->migrateItem($migration, [
+            'id' => 33,
+            'title' => ['rendered' => 'Anonymous'],
+            'content' => ['rendered' => '<p>Words.</p>'],
+            'categories' => [20],
+        ]);
+
+        $this->assertSame('success', $result->status);
+        $this->assertSame('The Corner Shop', $captured['article']['author']['name']);
     }
 
     /** @test */
