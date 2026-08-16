@@ -28,19 +28,62 @@ function appBridge(): AppBridge | undefined {
   return (window as unknown as { shopify?: AppBridge }).shopify;
 }
 
+/**
+ * Are we running inside the Shopify admin?
+ *
+ * `host` is on the URL only on the FIRST load — client-side navigation drops the
+ * query string — so the answer is remembered. Without that, the app looks
+ * embedded on load and standalone one click later.
+ */
+function isEmbedded(): boolean {
+  if (new URLSearchParams(window.location.search).has("host")) {
+    sessionStorage.setItem("shopify_embedded", "1");
+
+    return true;
+  }
+
+  return sessionStorage.getItem("shopify_embedded") === "1" || window.top !== window.self;
+}
+
 async function authHeader(): Promise<Record<string, string>> {
   // Embedded: authenticate with a fresh session token (JWT) per request.
   const sb = appBridge();
+
   if (sb?.idToken) {
     try {
       const token = await sb.idToken();
+
       return { Authorization: `Bearer ${token}` };
-    } catch {
-      /* fall through to dev fallback */
+    } catch (e) {
+      // App Bridge is here and REFUSED to mint a token. Falling through to the
+      // dev fallback made that unreadable: the server rejects X-Shop-Domain in
+      // production, so the merchant was told "Missing session token" — which
+      // says the app forgot to send one, when in fact the admin declined to
+      // issue one. The two have completely different fixes.
+      throw new ApiError(
+        401,
+        "Shopify would not issue a session token for this page. Close the app and open it again from your " +
+          "Shopify admin. If it keeps happening, reinstall the app. " +
+          `(${(e as Error)?.message ?? "no reason given"})`,
+      );
     }
   }
+
+  // App Bridge should always be present in the admin. When it is not, the script
+  // did not load — an ad blocker, a CSP, or the app opened outside the admin.
+  // Saying so beats a 401 that reads as an expired login.
+  if (isEmbedded()) {
+    throw new ApiError(
+      401,
+      "Shopify App Bridge did not load, so this page cannot authenticate. Open the app from your Shopify " +
+        "admin (Apps → Store Shift) rather than from a bookmark, and check that no browser extension is " +
+        "blocking cdn.shopify.com.",
+    );
+  }
+
   // Local-dev fallback (not embedded): identify the shop by header.
   const shop = currentShop();
+
   return shop ? { "X-Shop-Domain": shop } : {};
 }
 
@@ -95,13 +138,19 @@ function errorMessage(status: number, body: string): string {
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   let res: Response;
 
+  // Resolved BEFORE the try, deliberately. Inside it, an authentication problem
+  // authHeader() had just described precisely was caught by the network handler
+  // below and rewritten as "Could not reach the server" — sending everyone to
+  // check their wifi over a token the Shopify admin had declined to issue.
+  const auth = await authHeader();
+
   try {
     res = await fetch(`${BASE_URL}${path}`, {
       ...options,
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
-        ...(await authHeader()),
+        ...auth,
         ...(options.headers ?? {}),
       },
     });

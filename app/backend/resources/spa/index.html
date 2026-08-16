@@ -4,16 +4,39 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/app/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Shopify App Bridge — required on every page in the embedded admin.
-         Loaded only when embedded (inside the admin iframe, or when Shopify
-         passes a `host` param) so standalone/dev use still works without a
-         forced redirect to Shopify. -->
+    <!-- Shopify App Bridge — required on every page in the embedded admin, and
+         deliberately NOT loaded on the super-admin panel, which is not a Shopify
+         surface and would be redirected into a Shopify admin the operator may
+         not have. -->
     <meta name="shopify-api-key" content="1462f5d83148f24e32ddf349001f529a" />
     <script>
       (function () {
-        // Shopify always passes a `host` param when loading the app embedded.
-        // Using it (rather than iframe detection) avoids false positives.
-        if (new URLSearchParams(window.location.search).has("host")) {
+        // The super admin panel authenticates with its own bearer token.
+        if (window.location.pathname.indexOf("/admin") !== -1) return;
+
+        var params = new URLSearchParams(window.location.search);
+
+        // `host` is only ever on the FIRST url Shopify opens. Client-side
+        // navigation drops the query string, so a reload on /app/woocommerce
+        // arrives with no `host` at all — and testing for it alone meant App
+        // Bridge silently did not load, no session token could be minted, and
+        // every API call answered "Missing session token" while the page itself
+        // rendered fine. Remembering it for the tab is what makes a refresh, a
+        // back button and a deep link behave like the first load.
+        try {
+          if (params.has("host")) sessionStorage.setItem("shopify_embedded", "1");
+        } catch (e) {
+          /* storage blocked in a third-party frame — the iframe test covers it */
+        }
+
+        var remembered = false;
+        try {
+          remembered = sessionStorage.getItem("shopify_embedded") === "1";
+        } catch (e) {
+          /* as above */
+        }
+
+        if (params.has("host") || remembered || window.top !== window.self) {
           document.write(
             '<script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"><\/script>'
           );
@@ -21,7 +44,7 @@
       })();
     </script>
     <title>Store Shift — WooCommerce → Shopify Migrator</title>
-    <script type="module" crossorigin src="/app/assets/index-IOnZSWf-.js"></script>
+    <script type="module" crossorigin src="/app/assets/index-ChOGDUjs.js"></script>
     <link rel="stylesheet" crossorigin href="/app/assets/index-CAaziDo7.css">
   </head>
   <body>
