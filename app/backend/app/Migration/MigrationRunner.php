@@ -34,8 +34,19 @@ class MigrationRunner
      * budget, and that limit is small. Running orders wide just converts the extra
      * workers into throttle errors, so they stay close to serial no matter how
      * much headroom the shop's plan has.
+     *
+     * This is the reason an order migration keeps ~2 workers busy while eight are
+     * running, which reads as a bug and is not — but it now comes from
+     * config/migration.php (MIGRATION_ORDER_CONCURRENCY) rather than being welded
+     * into the class, because the right number differs by store and finding it
+     * out should not cost a deploy.
+     *
+     * @return array<string, int>
      */
-    private const MAX_CONCURRENCY_PER_ENTITY = ['order' => 2];
+    private static function perEntityCeilings(): array
+    {
+        return array_map('intval', (array) config('migration.entity_concurrency', ['order' => 2]));
+    }
 
     /**
      * Dispatch the outstanding batches, or finalize when there is none left.
@@ -145,7 +156,7 @@ class MigrationRunner
             ? app(ShopifyPlan::class)->concurrencyFor($shop)
             : 1;
 
-        return max(1, min($allowed, self::MAX_CONCURRENCY_PER_ENTITY[$entityType] ?? PHP_INT_MAX));
+        return max(1, min($allowed, self::perEntityCeilings()[$entityType] ?? PHP_INT_MAX));
     }
 
     private static function inFlight(int $migrationId, string $entityType): int

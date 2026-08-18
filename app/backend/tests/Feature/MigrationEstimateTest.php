@@ -8,6 +8,8 @@ use App\Models\StoreMigration;
 use App\Models\WoocommerceConnection;
 use App\Support\MigrationEstimate;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
@@ -63,9 +65,54 @@ class MigrationEstimateTest extends TestCase
                 'processed_items' => $processed,
                 'successful_items' => $processed,
             ]);
+
+            $this->mappingRows($migration, (string) $type, (int) $processed, $startedAt);
         }
 
         return $migration->load('entities');
+    }
+
+    /**
+     * The mapping rows a real run of this shape would have written.
+     *
+     * Not decoration. In production `processed_items` is DERIVED from these rows
+     * (MigrationRunner::syncCounters), so a counter without them is a state the
+     * app cannot actually be in — and the estimate now measures each entity's
+     * pace from their timestamps, because the counters carry no time at all and
+     * therefore cannot tell a phase that ran fast from one running slowly.
+     *
+     * Spread evenly across the run's elapsed time, which is what a steady phase
+     * looks like. `created_at` is not fillable and Eloquent would stamp them all
+     * with now(), so they are inserted directly.
+     */
+    private function mappingRows(StoreMigration $migration, string $type, int $count, ?string $startedAt): void
+    {
+        if ($count <= 0 || $startedAt === null) {
+            return;
+        }
+
+        $start = Carbon::parse($startedAt);
+        $elapsed = max(1, (int) now()->diffInSeconds($start, absolute: true));
+        $rows = [];
+
+        foreach (range(1, $count) as $i) {
+            $at = $start->copy()->addSeconds((int) round($elapsed * ($i / $count)));
+
+            $rows[] = [
+                'migration_id' => $migration->id,
+                'shop_id' => $migration->shop_id,
+                'entity_type' => $type,
+                'woocommerce_id' => $i,
+                'shopify_id' => 'gid://shopify/Thing/'.$i,
+                'status' => 'success',
+                'created_at' => $at,
+                'updated_at' => $at,
+            ];
+        }
+
+        foreach (array_chunk($rows, 200) as $chunk) {
+            DB::table('migration_items')->insert($chunk);
+        }
     }
 
     // ------------------------------------------------------------------- plan
@@ -176,6 +223,69 @@ class MigrationEstimateTest extends TestCase
             MigrationEstimate::forRun($slow, 4)['seconds_remaining'],
             MigrationEstimate::forRun($fast, 4)['seconds_remaining'],
         );
+    }
+
+    /** @test */
+    public function a_fast_phase_does_not_make_the_slow_phase_that_follows_look_quick(): void
+    {
+        // THE bug this was rewritten for. A real run did 10,000 products in about
+        // an hour (~166/min) and then dropped to roughly 4 orders a minute,
+        // because Shopify rate limits orderCreate separately and the order phase
+        // runs under a per-entity worker ceiling.
+        //
+        // The old estimate divided TOTAL elapsed by TOTAL weighted work done, so
+        // the finished product phase still dominated the average and the app
+        // quoted minutes for a phase with hours left — then walked that number
+        // upward all afternoon. Measuring each entity separately is what fixes it.
+        $migration = $this->migration(
+            ['product' => [10_000, 10_000], 'order' => [2_500, 500]],
+            startedAt: now()->subHours(3)->toDateTimeString(),
+        );
+
+        $estimate = MigrationEstimate::forRun($migration, 8);
+
+        $this->assertSame('progress', $estimate['basis']);
+
+        // 2,000 orders left. The product phase is irrelevant to that number now;
+        // anything under an hour would be the old lie in a new place.
+        $this->assertGreaterThan(3600, $estimate['seconds_remaining']);
+    }
+
+    /** @test */
+    public function orders_are_not_promised_a_parallelism_they_never_get(): void
+    {
+        // Orders run under their own ceiling however many workers exist, so
+        // dividing them by eight described a run that cannot happen. Products,
+        // which have no ceiling, must still get the full spread — this is a
+        // per-entity correction, not a blanket slowdown.
+        config(['migration.entity_concurrency' => ['order' => 2]]);
+
+        $this->assertSame(
+            MigrationEstimate::secondsFor('order', 1_000, 2),
+            MigrationEstimate::secondsFor('order', 1_000, 8),
+            'more workers must not shorten a phase Shopify meters per shop',
+        );
+
+        $this->assertLessThan(
+            MigrationEstimate::secondsFor('product', 1_000, 2),
+            MigrationEstimate::secondsFor('product', 1_000, 8),
+        );
+    }
+
+    /** @test */
+    public function the_reported_worker_count_matches_what_the_phase_may_use(): void
+    {
+        // "8 parallel workers" on screen while three processes are busy on the
+        // server is the app contradicting itself. During the order phase the
+        // honest number is the order ceiling.
+        config(['migration.entity_concurrency' => ['order' => 2]]);
+
+        $migration = $this->migration(
+            ['product' => [100, 100], 'order' => [500, 10]],
+            startedAt: now()->subHour()->toDateTimeString(),
+        );
+
+        $this->assertSame(2, MigrationEstimate::forRun($migration, 8)['workers']);
     }
 
     /** @test */

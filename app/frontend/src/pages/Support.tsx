@@ -202,7 +202,7 @@ export default function Support() {
                                 <BlockStack gap="100">
                                   <Text as="span" variant="bodySm" fontWeight="semibold">
                                     {r.author_type === "admin"
-                                      ? `${r.author_name ?? "Support"} (Store Shift)`
+                                      ? `${r.author_name ?? "Support"} (Shift Shop)`
                                       : "You"}
                                   </Text>
                                   <Text as="p">{r.message}</Text>

@@ -2,7 +2,9 @@
 
 namespace App\Support;
 
+use App\Models\MigrationItem;
 use App\Models\StoreMigration;
+use Illuminate\Support\Carbon;
 
 /**
  * How long a migration will take, before it starts and while it runs.
@@ -12,24 +14,37 @@ use App\Models\StoreMigration;
  * Without a number, the only signal a merchant has is a progress bar that barely
  * moves, which reads as broken rather than slow.
  *
- * TWO THINGS MAKE THIS HONEST RATHER THAN A GUESS.
+ * THREE THINGS MAKE THIS HONEST RATHER THAN A GUESS.
  *
  * 1. RECORDS ARE NOT INTERCHANGEABLE. A product is a productSet that runs
- *    SYNCHRONOUSLY while Shopify downloads every one of its images, plus a
- *    separate WooCommerce read for its variations. A coupon is one small
- *    mutation. Treating them as one unit of work meant an estimate built from a
- *    catalogue of coupons and blog posts, then applied to products, was wrong by
- *    an order of magnitude. So each entity carries a WEIGHT, and everything
- *    below is arithmetic on weighted work rather than on record counts.
+ *    SYNCHRONOUSLY while Shopify downloads every one of its images. A coupon is
+ *    one small mutation. Each entity carries a WEIGHT, and everything below is
+ *    arithmetic on weighted work rather than on record counts.
  *
- * 2. THE LIVE ESTIMATE CALIBRATES ITSELF. The static weights cannot know that
- *    this merchant's WooCommerce host answers in nine seconds, or that their
- *    products have twenty photos each. Once a run has done enough work to have
- *    an opinion, the estimate is derived from ITS OWN elapsed time — so it
- *    converges on the truth for that store instead of insisting on an average.
+ * 2. ENTITIES DO NOT ALL GET THE SAME PARALLELISM. Orders are rate limited by
+ *    Shopify separately from the GraphQL point budget, so they run under a
+ *    per-entity ceiling (config migration.entity_concurrency) however many
+ *    workers exist. Dividing the whole run by the shop's worker count promised a
+ *    speed the order phase is structurally incapable of reaching.
  *
- * The pre-start number is deliberately the rougher of the two and is presented
- * as such; its job is to distinguish "minutes" from "overnight".
+ * 3. THE LIVE ESTIMATE MEASURES EACH ENTITY SEPARATELY, AND RECENTLY.
+ *
+ *    This is the part that was wrong, and it was wrong in the worst direction.
+ *    The estimate used to be one number — total elapsed divided by total
+ *    weighted work done — which is a CUMULATIVE average over the whole run. On a
+ *    real store that is catastrophic: ten thousand products land in an hour
+ *    (~166/min), then orders start and manage four a minute. The cumulative
+ *    average is still dominated by the product phase, so the app cheerfully
+ *    predicted minutes for a phase that had eight hours left, and then walked
+ *    that prediction upward for the rest of the day. An estimate that is wrong
+ *    is survivable; one that is confidently wrong and keeps moving is worse than
+ *    none.
+ *
+ *    So pace is measured PER ENTITY, from that entity's own mapping rows, and
+ *    preferentially over a recent WINDOW rather than the entity's whole life —
+ *    which is also what makes it react to a store that has started throttling.
+ *    Entities that have not started yet are priced from the model, calibrated by
+ *    how wrong the model turned out to be on the entities we HAVE measured.
  */
 class MigrationEstimate
 {
@@ -44,8 +59,8 @@ class MigrationEstimate
         // productSet, synchronous, waits for Shopify to fetch every image; plus a
         // variations read for variable products.
         'product' => 1.0,
-        // orderCreate with line items, addresses, transactions and tax lines, and
-        // rate limited separately by Shopify (which is why it runs near-serial).
+        // One small mutation, but see ORDERS_PER_MINUTE_CEILING: what an order
+        // actually costs is set by Shopify's rate limiter, not by this number.
         'order' => 0.7,
         // A full review set is read from WooCommerce per product, then one
         // metafield write.
@@ -65,30 +80,73 @@ class MigrationEstimate
     /**
      * Seconds one unit of weighted work takes on ONE worker, before we have
      * measured anything.
-     *
-     * A product on a healthy pair of stores lands around here. It is only ever
-     * the starting point: the moment a run has real progress, measured() takes
-     * over. Tunable because the right number depends on typical image sizes more
-     * than on anything in this app.
      */
     private const BASELINE_SECONDS_PER_UNIT = 2.5;
 
     /**
-     * Weighted work that must be done before a measured rate is trusted.
+     * Orders a shop can be expected to create per minute IN TOTAL, whatever the
+     * worker count.
      *
-     * Below this the sample is dominated by whatever the run happens to have
-     * started with — the categories at the front of the dependency order are
-     * quick, and extrapolating a whole catalogue from them promised merchants
-     * twenty minutes for a job that took six hours.
+     * Shopify rate limits orderCreate separately from the GraphQL point budget
+     * and reports the refusal as an ordinary userError, so the app cannot read
+     * this ceiling anywhere — it can only be observed. On the store this was
+     * calibrated against, 2,500 orders took about nine hours while 10,000
+     * products (with images) took one; the weighted model predicted well under
+     * an hour for the orders, because it costed an order at 0.7 of a product and
+     * then divided by eight workers that orders are never allowed to use.
+     *
+     * Applied as a FLOOR on the order phase rather than as a weight, because it
+     * is a throughput limit rather than a per-record cost: it does not improve
+     * with more workers, which is precisely what a weight would imply. The live
+     * estimate overrides it as soon as the run has measured itself.
      */
-    private const MIN_SAMPLE_UNITS = 25.0;
+    private const ORDERS_PER_MINUTE_CEILING = 6.0;
+
+    /**
+     * How far back the live pace is measured.
+     *
+     * Long enough that one slow record does not move the number, short enough
+     * that the estimate reacts when a phase changes character — which, on a run
+     * that goes from products to orders, it violently does.
+     */
+    private const ROLLING_WINDOW_SECONDS = 900;
+
+    /** Records inside the window before the rolling pace is trusted. */
+    private const MIN_ROLLING_RECORDS = 8;
+
+    /** Records over an entity's whole life before its own pace is trusted. */
+    private const MIN_LIFETIME_RECORDS = 5;
 
     /** And enough wall-clock that per-record noise has averaged out. */
     private const MIN_SAMPLE_SECONDS = 20.0;
 
+    /**
+     * How long a live measurement is reused.
+     *
+     * The details page polls every three seconds, and this is two grouped
+     * queries over the run's mapping rows. On a 50,000-record run that is not
+     * something to do twenty times a minute per open tab.
+     */
+    private const SNAPSHOT_TTL_SECONDS = 15;
+
     public static function weightFor(string $entityType): float
     {
         return self::WEIGHTS[$entityType] ?? self::DEFAULT_WEIGHT;
+    }
+
+    /**
+     * Workers ONE entity may actually use.
+     *
+     * The shop-wide number is an upper bound the order phase never reaches. Read
+     * from the same config key as MigrationRunner::concurrencyFor(), so changing
+     * the ceiling moves the estimate with it instead of leaving the two to
+     * disagree.
+     */
+    public static function workersFor(string $entityType, int $workers): int
+    {
+        $ceilings = (array) config('migration.entity_concurrency', []);
+
+        return max(1, min(max(1, $workers), (int) ($ceilings[$entityType] ?? PHP_INT_MAX)));
     }
 
     /**
@@ -97,14 +155,37 @@ class MigrationEstimate
      * Given per entity as well as in total because the wizard's summary has to
      * answer for whatever the merchant actually ticked, and the preview is
      * computed before they have ticked anything. Summing these is sound: the
-     * spread across workers is a division, so the parts add up to the whole.
+     * entities run one after another, so their times add.
      */
     public static function secondsFor(string $entityType, int $count, int $workers): int
     {
-        return self::spread(
-            max(0, $count) * self::weightFor($entityType) * self::BASELINE_SECONDS_PER_UNIT,
-            $workers,
+        $count = max(0, $count);
+
+        if ($count === 0) {
+            return 0;
+        }
+
+        $modelled = self::spread(
+            $count * self::weightFor($entityType) * self::BASELINE_SECONDS_PER_UNIT,
+            self::workersFor($entityType, $workers),
         );
+
+        return max($modelled, self::rateLimitFloor($entityType, $count));
+    }
+
+    /**
+     * A throughput ceiling the run cannot argue its way past, in seconds.
+     *
+     * Only orders have one today. Returning zero for everything else keeps this
+     * out of the way of entities whose speed really is a function of workers.
+     */
+    private static function rateLimitFloor(string $entityType, int $count): int
+    {
+        if ($entityType !== 'order' || $count <= 0) {
+            return 0;
+        }
+
+        return (int) ceil(($count / self::ORDERS_PER_MINUTE_CEILING) * 60);
     }
 
     /**
@@ -116,18 +197,18 @@ class MigrationEstimate
      */
     public static function forPlan(array $countsByEntity, int $workers): ?array
     {
-        $units = 0.0;
+        $seconds = 0;
 
         foreach ($countsByEntity as $entityType => $count) {
-            $units += max(0, (int) $count) * self::weightFor((string) $entityType);
+            $seconds += self::secondsFor((string) $entityType, (int) $count, $workers);
         }
 
-        if ($units <= 0) {
+        if ($seconds <= 0) {
             return null;
         }
 
         return [
-            'seconds' => self::spread($units * self::BASELINE_SECONDS_PER_UNIT, $workers),
+            'seconds' => $seconds,
             'basis' => 'plan',
             'workers' => max(1, $workers),
         ];
@@ -136,75 +217,228 @@ class MigrationEstimate
     /**
      * Estimate for a run in flight.
      *
-     * Falls back to the static model until the run has done enough to speak for
-     * itself, so the number never disappears and never jumps about early on.
-     *
      * @return array{seconds_remaining: int, basis: string, workers: int, records_per_minute: float|null}|null
      */
     public static function forRun(StoreMigration $migration, int $workers): ?array
     {
-        $done = 0.0;
-        $total = 0.0;
-        $recordsDone = 0;
-        $recordsTotal = 0;
+        $entities = $migration->entities;
 
-        foreach ($migration->entities as $entity) {
-            $weight = self::weightFor($entity->entity_type);
+        if ($entities->isEmpty()) {
+            return null;
+        }
+
+        $remainingByEntity = [];
+        $anyRemaining = false;
+
+        foreach ($entities as $entity) {
+            $total = (int) $entity->total_items;
 
             // Capped because processed can briefly exceed a total that planning
             // later revised down, and a negative remainder reads as "finished"
             // on a run that plainly is not.
-            $processed = min((int) $entity->processed_items, (int) $entity->total_items);
+            $processed = min((int) $entity->processed_items, $total);
+            $remaining = max(0, $total - $processed);
 
-            $done += $processed * $weight;
-            $total += (int) $entity->total_items * $weight;
-            $recordsDone += $processed;
-            $recordsTotal += (int) $entity->total_items;
+            $remainingByEntity[$entity->entity_type] = $remaining;
+            $anyRemaining = $anyRemaining || $remaining > 0;
         }
 
-        if ($total <= 0) {
-            return null;
-        }
-
-        $remaining = max(0.0, $total - $done);
-
-        if ($remaining <= 0.0) {
+        if (! $anyRemaining) {
             return [
                 'seconds_remaining' => 0,
                 'basis' => 'progress',
-                'workers' => max(1, $workers),
+                'workers' => self::reportedWorkers($migration, $workers),
                 'records_per_minute' => null,
             ];
         }
 
-        $elapsed = $migration->started_at
-            ? max(0.0, (float) now()->diffInSeconds($migration->started_at, absolute: true))
-            : 0.0;
+        $measured = self::measuredPace($migration);
+        $calibration = self::calibration($measured, $workers);
 
-        // Measured: this run's own pace, which already includes the merchant's
-        // host, their image sizes, their Shopify plan and however many workers
-        // are really running. Nothing here has to be assumed.
-        if ($done >= self::MIN_SAMPLE_UNITS && $elapsed >= self::MIN_SAMPLE_SECONDS) {
-            $secondsPerUnit = $elapsed / $done;
+        $seconds = 0.0;
+        $usedMeasurement = false;
 
-            return [
-                'seconds_remaining' => (int) round($remaining * $secondsPerUnit),
-                'basis' => 'progress',
-                'workers' => max(1, $workers),
-                'records_per_minute' => $elapsed > 0
-                    ? round($recordsDone / ($elapsed / 60), 1)
-                    : null,
-            ];
+        foreach ($remainingByEntity as $entityType => $remaining) {
+            if ($remaining <= 0) {
+                continue;
+            }
+
+            $pace = $measured[$entityType]['seconds_per_record'] ?? null;
+
+            if ($pace !== null) {
+                // This entity's own recent pace. The merchant's host, their image
+                // sizes, their Shopify plan and whatever throttling is happening
+                // right now are all already inside this number.
+                $seconds += $remaining * $pace;
+                $usedMeasurement = true;
+
+                continue;
+            }
+
+            // Not started yet. Price it from the model, scaled by how wrong the
+            // model turned out to be on the entities that HAVE run — a store
+            // running at half the modelled speed will keep doing so.
+            $seconds += self::secondsFor((string) $entityType, $remaining, $workers) * $calibration;
         }
 
-        // Too early to have an opinion of its own — the static model, spread over
-        // the workers the run is allowed to use.
         return [
-            'seconds_remaining' => self::spread($remaining * self::BASELINE_SECONDS_PER_UNIT, $workers),
-            'basis' => 'plan',
-            'workers' => max(1, $workers),
-            'records_per_minute' => null,
+            'seconds_remaining' => (int) max(1, round($seconds)),
+            // "progress" is a claim that the number came from this run, and the
+            // UI words it differently because of that. It is only earned when an
+            // entity with work LEFT measured itself.
+            'basis' => $usedMeasurement ? 'progress' : 'plan',
+            'workers' => self::reportedWorkers($migration, $workers),
+            'records_per_minute' => self::currentRecordsPerMinute($measured),
         ];
+    }
+
+    /**
+     * Workers to SHOW the merchant.
+     *
+     * The shop-wide ceiling is not what the run is using: during the order phase
+     * a shop entitled to eight gets two, because orders are rate limited
+     * separately. Reporting eight there is how "8 parallel workers" in the UI and
+     * three busy processes on the server ended up describing the same run.
+     */
+    private static function reportedWorkers(StoreMigration $migration, int $workers): int
+    {
+        $active = $migration->entities
+            ->first(fn ($e) => (int) $e->processed_items < (int) $e->total_items)?->entity_type;
+
+        return $active
+            ? self::workersFor($active, $workers)
+            : max(1, $workers);
+    }
+
+    /**
+     * Seconds per record for every entity this run has measurable progress on.
+     *
+     * Two grouped passes: a recent WINDOW (preferred — it reacts to a phase
+     * change and to a store that has started throttling) and the entity's whole
+     * life (the fallback for an entity that has just started or has gone quiet).
+     *
+     * @return array<string, array{seconds_per_record: float, recent: int}>
+     */
+    private static function measuredPace(StoreMigration $migration): array
+    {
+        $cacheKey = "migration:{$migration->id}:pace";
+        $cached = SafeCache::get($cacheKey);
+
+        if (is_array($cached)) {
+            return $cached;
+        }
+
+        $since = now()->subSeconds(self::ROLLING_WINDOW_SECONDS);
+
+        $lifetime = MigrationItem::query()
+            ->where('migration_id', $migration->id)
+            ->selectRaw('entity_type, count(*) as records, min(created_at) as first_at, max(created_at) as last_at')
+            ->groupBy('entity_type')
+            ->get();
+
+        $recent = MigrationItem::query()
+            ->where('migration_id', $migration->id)
+            ->where('created_at', '>=', $since)
+            ->selectRaw('entity_type, count(*) as records, min(created_at) as first_at')
+            ->groupBy('entity_type')
+            ->get()
+            ->keyBy('entity_type');
+
+        $paces = [];
+
+        foreach ($lifetime as $row) {
+            $entityType = (string) $row->entity_type;
+            $window = $recent->get($entityType);
+
+            $pace = self::paceFrom(
+                (int) ($window->records ?? 0),
+                $window->first_at ?? null,
+                // Open-ended at the near side: the entity is still running, so
+                // "now" is the right end of the window. Using the last mapping
+                // row instead would make a stalled entity look infinitely fast.
+                now(),
+                self::MIN_ROLLING_RECORDS,
+            ) ?? self::paceFrom(
+                (int) $row->records,
+                $row->first_at,
+                $row->last_at,
+                self::MIN_LIFETIME_RECORDS,
+            );
+
+            if ($pace !== null) {
+                $paces[$entityType] = [
+                    'seconds_per_record' => $pace,
+                    'recent' => (int) ($window->records ?? 0),
+                ];
+            }
+        }
+
+        SafeCache::put($cacheKey, $paces, now()->addSeconds(self::SNAPSHOT_TTL_SECONDS));
+
+        return $paces;
+    }
+
+    /** Seconds per record across a span, or null when the sample is too thin. */
+    private static function paceFrom(int $records, $firstAt, $lastAt, int $minimum): ?float
+    {
+        if ($records < $minimum || ! $firstAt || ! $lastAt) {
+            return null;
+        }
+
+        $seconds = Carbon::parse($lastAt)->diffInSeconds(Carbon::parse($firstAt), absolute: true);
+
+        if ($seconds < self::MIN_SAMPLE_SECONDS) {
+            return null;
+        }
+
+        return $seconds / max(1, $records);
+    }
+
+    /**
+     * How wrong the static model is on this store, as a multiplier.
+     *
+     * Measured against the entities that have actually run, so an entity that has
+     * not started is not priced as though it were on a fast host when everything
+     * before it was on a slow one. Bounded, because one weird entity must not
+     * turn a six-hour estimate into a six-day one.
+     */
+    private static function calibration(array $measured, int $workers): float
+    {
+        $ratios = [];
+
+        foreach ($measured as $entityType => $data) {
+            $modelled = self::secondsFor((string) $entityType, 1, $workers);
+
+            if ($modelled > 0) {
+                $ratios[] = $data['seconds_per_record'] / $modelled;
+            }
+        }
+
+        if (empty($ratios)) {
+            return 1.0;
+        }
+
+        return min(10.0, max(0.2, array_sum($ratios) / count($ratios)));
+    }
+
+    /**
+     * Records a minute RIGHT NOW, across whatever is running.
+     *
+     * Deliberately the recent figure rather than the run's lifetime average: the
+     * merchant is watching a phase, and the average of a fast phase that has
+     * finished and a slow one that is running describes neither of them.
+     */
+    private static function currentRecordsPerMinute(array $measured): ?float
+    {
+        $perMinute = 0.0;
+
+        foreach ($measured as $data) {
+            if ($data['recent'] >= self::MIN_ROLLING_RECORDS && $data['seconds_per_record'] > 0) {
+                $perMinute += 60 / $data['seconds_per_record'];
+            }
+        }
+
+        return $perMinute > 0 ? round($perMinute, 1) : null;
     }
 
     /**

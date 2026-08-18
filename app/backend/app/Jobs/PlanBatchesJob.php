@@ -8,6 +8,7 @@ use App\Models\MigrationBatch;
 use App\Models\MigrationEntity;
 use App\Models\StoreMigration;
 use App\Models\WoocommerceConnection;
+use App\Support\MigrationDiagnostics;
 use App\Support\SourceHealth;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -116,6 +117,7 @@ class PlanBatchesJob implements ShouldQueue
         }
 
         SourceHealth::within($migration->id);
+        MigrationDiagnostics::begin($migration->id, null, 'planning pass');
 
         $startedAt = microtime(true);
         $perPage = max(1, (int) config('migration.per_page', 100));
@@ -147,6 +149,8 @@ class PlanBatchesJob implements ShouldQueue
 
             while ($entity->planned_items < $entity->total_items) {
                 if ($migration->isCancelledOrPaused()) {
+                    MigrationDiagnostics::finish('stopped (run cancelled or paused)');
+
                     return;
                 }
 
@@ -174,6 +178,7 @@ class PlanBatchesJob implements ShouldQueue
                 if (microtime(true) - $startedAt >= self::TIME_BUDGET_SECONDS) {
                     self::dispatch($migration->id);
                     MigrationRunner::advance($migration->id);
+                    MigrationDiagnostics::finish('handed over on time budget');
 
                     return;
                 }
@@ -191,6 +196,7 @@ class PlanBatchesJob implements ShouldQueue
         );
 
         MigrationRunner::advance($migration->id);
+        MigrationDiagnostics::finish('planning complete');
     }
 
     /**

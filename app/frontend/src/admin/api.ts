@@ -174,6 +174,56 @@ export interface AdminMigration {
   completed_at: string | null;
 }
 
+/**
+ * The developer view of one run: what the SYSTEM did, as opposed to what
+ * happened to the merchant's data.
+ *
+ * Every number here is summed from the per-job `debug` lines the engine writes
+ * (see App\Support\MigrationDiagnostics), so it is empty for any stretch of a
+ * run that executed with MIGRATION_DEBUG_LOG off — which is what
+ * `debug_logging_enabled` is for.
+ */
+export interface MigrationDebug {
+  migration_id: number;
+  shop: string | null;
+  status: string;
+  started_at: string | null;
+  completed_at: string | null;
+  elapsed_seconds: number;
+  debug_logging_enabled: boolean;
+  /** Why N workers are busy when M are running — the per-entity ceiling. */
+  concurrency: Record<string, string | number>;
+  runtime: Record<string, string | number>;
+  queue: { pending_jobs: number; failed_jobs: number };
+  throughput: {
+    entity: string;
+    total: number;
+    processed: number;
+    successful: number;
+    failed: number;
+    records_per_minute: number | null;
+  }[];
+  totals: Record<string, number>;
+  workers: {
+    worker: string;
+    jobs: number;
+    seconds: number;
+    last_seen: string;
+    recent: boolean;
+  }[];
+  outcomes: Record<string, number>;
+  slowest_records: { id: number; seconds: number; at: string }[];
+  notes: Record<string, number>;
+  batches: Record<string, Record<string, number>>;
+  source_health: {
+    status: string;
+    average_seconds: number;
+    requests: number;
+    failures: number;
+    message: string;
+  } | null;
+}
+
 export interface ErrorLog {
   id: number;
   migration_id: number;
@@ -296,6 +346,34 @@ export const adminApi = {
     return request<{ data: AdminMigration[]; meta: PageMeta }>(`/migrations?${q}`);
   },
   migration: (id: number) => request<any>(`/migrations/${id}`),
+
+  /** Live developer diagnostics for one run. */
+  migrationDebug: (id: number) => request<MigrationDebug>(`/migrations/${id}/debug`),
+
+  /**
+   * The full developer log as a text file.
+   *
+   * Fetched rather than linked: the endpoint needs the admin bearer token, and a
+   * plain new-tab open would send no Authorization header and 401.
+   */
+  downloadMigrationDebugLog: async (id: number) => {
+    const res = await fetch(`${BASE}/migrations/${id}/debug-log`, {
+      headers: { Authorization: `Bearer ${adminToken.get()}` },
+    });
+
+    if (!res.ok) {
+      throw new Error(`Download failed (${res.status})`);
+    }
+
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `store-shift-debug-migration-${id}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
 
   errors: (page = 1, params: { shop_id?: number; migration_id?: number } = {}) => {
     const q = new URLSearchParams({ page: String(page), ...(params as any) });

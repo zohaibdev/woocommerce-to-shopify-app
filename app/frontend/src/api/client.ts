@@ -2,48 +2,16 @@
 // In the embedded app, attach the Shopify session token to every request
 // (via App Bridge getSessionToken). For local dev we fall back to no auth.
 
+// Who this tab is, and whether it is inside the Shopify admin. Shared with the
+// router (src/shopContext.ts) on purpose: the two used to answer separately and
+// disagree, which is how a fresh browser got the install prompt on every
+// client-side navigation.
+import { appBridge, currentShop, isEmbedded } from "../shopContext";
+
 // Derived from the deploy base ("/app/" in production, "/" in dev) so the API
 // lives alongside the app: /app/api in production, /api locally.
 const BASE_URL =
   import.meta.env.VITE_API_URL ?? `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api`;
-
-// After OAuth the app is loaded at /?shop=xxx.myshopify.com. Persist that shop
-// so subsequent API calls target the correct tenant. In a fully embedded app
-// this is replaced by an App Bridge session token (JWT); see SPECIFICATION §8.
-function currentShop(): string | null {
-  const fromUrl = new URLSearchParams(window.location.search).get("shop");
-  if (fromUrl) {
-    localStorage.setItem("shop_domain", fromUrl);
-    return fromUrl;
-  }
-  return localStorage.getItem("shop_domain");
-}
-
-// App Bridge (loaded via cdn.shopify.com/shopifycloud/app-bridge.js) exposes a
-// global `shopify` object when the app is embedded in the Shopify admin.
-interface AppBridge {
-  idToken?: () => Promise<string>;
-}
-function appBridge(): AppBridge | undefined {
-  return (window as unknown as { shopify?: AppBridge }).shopify;
-}
-
-/**
- * Are we running inside the Shopify admin?
- *
- * `host` is on the URL only on the FIRST load — client-side navigation drops the
- * query string — so the answer is remembered. Without that, the app looks
- * embedded on load and standalone one click later.
- */
-function isEmbedded(): boolean {
-  if (new URLSearchParams(window.location.search).has("host")) {
-    sessionStorage.setItem("shopify_embedded", "1");
-
-    return true;
-  }
-
-  return sessionStorage.getItem("shopify_embedded") === "1" || window.top !== window.self;
-}
 
 async function authHeader(): Promise<Record<string, string>> {
   // Embedded: authenticate with a fresh session token (JWT) per request.
@@ -76,7 +44,7 @@ async function authHeader(): Promise<Record<string, string>> {
     throw new ApiError(
       401,
       "Shopify App Bridge did not load, so this page cannot authenticate. Open the app from your Shopify " +
-        "admin (Apps → Store Shift) rather than from a bookmark, and check that no browser extension is " +
+        "admin (Apps → Shift Shop) rather than from a bookmark, and check that no browser extension is " +
         "blocking cdn.shopify.com.",
     );
   }

@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\WoocommerceConnection;
 use App\Services\Exceptions\WooCommerceUnavailableException;
+use App\Support\MigrationDiagnostics;
 use App\Support\SafeCache;
 use App\Support\SourceHealth;
 use Illuminate\Http\Client\PendingRequest;
@@ -82,16 +83,28 @@ class WooCommerceClient
     {
         $startedAt = microtime(true);
 
+        // SourceHealth reports a rolling average to the MERCHANT in plain words;
+        // this reports the raw total per job to the developer log. Both, because
+        // "your store averages 12s a request" and "this job spent 40 of its 35
+        // seconds waiting on WooCommerce" answer different questions.
+        MigrationDiagnostics::bump('woo_calls');
+
         try {
             $response = $request();
         } catch (\Throwable $e) {
-            SourceHealth::record(microtime(true) - $startedAt, failed: true);
+            $elapsed = microtime(true) - $startedAt;
+            MigrationDiagnostics::add('woo_seconds', $elapsed);
+            MigrationDiagnostics::bump('woo_failures');
+            SourceHealth::record($elapsed, failed: true);
 
             throw $e;
         }
 
+        $elapsed = microtime(true) - $startedAt;
+        MigrationDiagnostics::add('woo_seconds', $elapsed);
+
         SourceHealth::record(
-            microtime(true) - $startedAt,
+            $elapsed,
             // 4xx is a credentials/permission problem, not an unhealthy host.
             failed: $response->serverError() || $response->status() === 429,
         );

@@ -79,7 +79,7 @@ export default function AdminLogin({ onSuccess }: { onSuccess: () => void }) {
                   lineHeight: 1.2,
                 }}
               >
-                Store Shift
+                Shift Shop
               </div>
               <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 14, marginTop: 4 }}>
                 WooCommerce → Shopify migration

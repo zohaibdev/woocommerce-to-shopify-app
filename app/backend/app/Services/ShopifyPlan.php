@@ -42,10 +42,20 @@ class ShopifyPlan
      * Roughly how many points a productSet costs, and how long one round trip
      * takes. Together they turn "points per second" into "how many jobs may run
      * at once" — see concurrencyFor().
+     *
+     * Both come from config now (see config/migration.php for the full reasoning).
+     * The seconds figure used to be a hard-coded 0.6, which is why a host running
+     * eight queue workers only ever had three of them busy on a Standard store.
      */
-    private const POINTS_PER_WRITE = 20;
+    private static function pointsPerWrite(): float
+    {
+        return max(1.0, (float) config('migration.shopify_write_points', 20));
+    }
 
-    private const SECONDS_PER_WRITE = 0.6;
+    private static function secondsPerWrite(): float
+    {
+        return max(0.1, (float) config('migration.shopify_write_seconds', 1.2));
+    }
 
     /**
      * Record the limits Shopify just told us about. Called on every response, so
@@ -139,7 +149,7 @@ class ShopifyPlan
             return min(2, $ceiling);
         }
 
-        $workers = (int) ceil(($restore / self::POINTS_PER_WRITE) * self::SECONDS_PER_WRITE);
+        $workers = (int) ceil(($restore / self::pointsPerWrite()) * self::secondsPerWrite());
 
         return max(1, min($workers, $ceiling));
     }

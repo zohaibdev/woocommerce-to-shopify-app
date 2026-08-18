@@ -6,8 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Models\MigrationItem;
 use App\Models\MigrationLog;
 use App\Models\StoreMigration;
+use App\Support\MigrationDeveloperLog;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AdminMigrationController extends Controller
 {
@@ -81,6 +83,42 @@ class AdminMigrationController extends Controller
             'started_at' => $m->started_at,
             'completed_at' => $m->completed_at,
         ]);
+    }
+
+    /**
+     * Live developer view of one migration — what the system is doing, as
+     * opposed to what happened to the merchant's data.
+     *
+     * Separate from show() on purpose: that endpoint feeds a support screen and
+     * is shaped for a human reading about a merchant. This one is shaped for
+     * whoever is trying to work out why a production run is crawling, and its
+     * cost (a scan of the run's debug rows) should not be paid by every page
+     * that happens to open a migration.
+     */
+    public function debug(int $id): JsonResponse
+    {
+        $migration = StoreMigration::with(['shop', 'entities'])->findOrFail($id);
+
+        return response()->json(MigrationDeveloperLog::for($migration)->snapshot());
+    }
+
+    /**
+     * The same thing as a text file, with the full log tail attached.
+     *
+     * Streamed: the log section is unbounded — a 50k-record run that failed
+     * systemically has a line per record — and a debug tool that runs the server
+     * out of memory is worse than no debug tool.
+     */
+    public function debugLog(int $id): StreamedResponse
+    {
+        $migration = StoreMigration::with(['shop', 'entities'])->findOrFail($id);
+        $report = MigrationDeveloperLog::for($migration);
+
+        return response()->streamDownload(
+            fn () => $report->stream(),
+            $report->filename(),
+            ['Content-Type' => 'text/plain; charset=UTF-8'],
+        );
     }
 
     /** Error logs across all stores, filterable by store / migration. */

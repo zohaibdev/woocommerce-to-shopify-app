@@ -138,6 +138,22 @@ class MigrationController extends Controller
 
         abort_if(empty($entities), 422, 'No valid entities selected');
 
+        // A dependency the plan blocked is skipped above rather than refused, so
+        // the merchant is never told about an entity they did not choose. For
+        // REVIEWS that leaves a run which cannot do anything: a review is written
+        // as a metafield ON a product, so with no products migrated every single
+        // one is recorded "the product was not migrated" and the merchant is
+        // charged a run to be told so. Refuse it here, in the merchant's own
+        // terms, instead of starting work guaranteed to be wasted.
+        //
+        // The wizard disables the same combination, so reaching this means a
+        // stale page or a direct API call — which is exactly why it cannot live
+        // in the frontend alone.
+        if (in_array('review', $entities, true) && ! in_array('product', $entities, true)) {
+            abort(422, 'Product reviews are saved onto the products they belong to, so Products must be '
+                .'migrated as well. Select Products, or upgrade your plan if it does not include them.');
+        }
+
         $connection = $shop->woocommerceConnection;
         abort_unless($connection && $connection->status === 'connected', 422, 'WooCommerce not connected');
 
@@ -253,7 +269,13 @@ class MigrationController extends Controller
 
         $limit = min(200, max(10, (int) $request->query('limit', 100)));
 
+        // `debug` is the developer log's raw material — worker ids, call counts,
+        // seconds per stage. It is written to the same table because it belongs
+        // to the same run, but a merchant reading "batch 12 handed over on time
+        // budget · woo 1×11.4s" learns nothing and loses the lines that were
+        // written for them. The admin panel reads it; this endpoint does not.
         $logs = MigrationLog::where('migration_id', $migration->id)
+            ->where('level', '!=', 'debug')
             ->when($request->filled('after'), fn ($q) => $q->where('id', '>', (int) $request->query('after')))
             ->orderByDesc('id')
             ->limit($limit)
@@ -375,7 +397,9 @@ class MigrationController extends Controller
             $line();
             $line('LOGS');
 
+            // Merchant-facing, so no `debug` — see logs() for why.
             MigrationLog::where('migration_id', $migration->id)
+                ->where('level', '!=', 'debug')
                 ->orderBy('id')
                 ->chunk(1000, function ($rows) use ($line) {
                     foreach ($rows as $log) {

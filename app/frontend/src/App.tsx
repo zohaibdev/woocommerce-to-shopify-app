@@ -19,13 +19,8 @@ import Support from "./pages/Support";
 import InstallPrompt from "./pages/InstallPrompt";
 import Pricing from "./pages/Pricing";
 import AdminApp from "./admin/AdminApp";
+import { hasShopContext } from "./shopContext";
 
-/**
- * True when the app was opened with Shopify context — embedded in the admin
- * (`host`), straight after OAuth (`shop`), or by a merchant who has used it
- * before (remembered shop). Without it every API call 401s, so we show the
- * install prompt instead of a dashboard that cannot load.
- */
 /**
  * Open a page of the public marketing site (docs, contact) in a new tab.
  *
@@ -36,11 +31,6 @@ import AdminApp from "./admin/AdminApp";
  */
 function openPublicPage(path: string): void {
   window.open(`${window.location.origin}${path}`, "_blank", "noopener");
-}
-
-function hasShopContext(): boolean {
-  const q = new URLSearchParams(window.location.search);
-  return q.has("host") || q.has("shop") || !!localStorage.getItem("shop_domain");
 }
 
 function App() {
@@ -62,8 +52,11 @@ function App() {
     return <AdminApp />;
   }
 
-  // Opened directly (not from Shopify) — offer installation instead of a
-  // dashboard that would just render a 401.
+  // Opened cold, outside Shopify, by someone who has never installed the app —
+  // offer installation instead of a dashboard that would just render a 401.
+  // Anything short of that (embedded, App Bridge present, a remembered shop)
+  // counts as context: this used to re-read the query string, which client-side
+  // navigation has already dropped, so every nav click showed the install page.
   if (!hasShopContext()) {
     return <InstallPrompt />;
   }
@@ -153,7 +146,7 @@ function App() {
         </span>
         <span style={{ display: "block", marginTop: 4 }}>
           <Text as="span" variant="bodySm" tone="subdued">
-            Store Shift — WooCommerce → Shopify migration
+            Shift Shop — WooCommerce → Shopify migration
           </Text>
         </span>
       </FooterHelp>

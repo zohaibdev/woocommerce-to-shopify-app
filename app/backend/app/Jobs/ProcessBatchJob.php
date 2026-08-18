@@ -10,8 +10,10 @@ use App\Models\MigrationEntity;
 use App\Models\MigrationItem;
 use App\Models\StoreMigration;
 use App\Services\Exceptions\ShopifyThrottledException;
+use App\Support\MigrationDiagnostics;
 use App\Support\SafeCache;
 use App\Support\SourceHealth;
+use App\Support\ThrottleBackoff;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -92,8 +94,7 @@ class ProcessBatchJob implements ShouldQueue
     private const HALT_CHECK_SECONDS = 2.0;
 
     /**
-     * Consecutive throttle pauses with NOTHING migrated in between, before this
-     * batch is given up on.
+     * Stalled throttle pauses AT FULL BACKOFF before this batch is given up on.
      *
      * A throttle pause used to re-dispatch a brand new job, which reset the
      * attempt counter — so nothing anywhere bounded the loop. Any permanent error
@@ -101,6 +102,12 @@ class ProcessBatchJob implements ShouldQueue
      * forever, and the migration sat at "processing" with no way out. Counting
      * only the pauses that made no progress leaves a genuinely busy shop free to
      * throttle as often as it likes.
+     *
+     * "At full backoff" is the load-bearing part. The waits now start short and
+     * escalate (see ThrottleBackoff), so counting every wait against this budget
+     * would give up on a batch after a few short probes — turning a store with a
+     * sixty-second window from slow into failed. The ramp is therefore added to
+     * the budget rather than spent out of it; see giveUpAfter().
      */
     private const MAX_STALLED_THROTTLE_WAITS = 10;
 
@@ -165,6 +172,16 @@ class ProcessBatchJob implements ShouldQueue
 
         $batch->refresh();
 
+        // From here on this job owns a chunk, so it is worth a line in the
+        // developer log however it ends. Started AFTER the claim on purpose: a
+        // job that stood down because someone else held the chunk did no work,
+        // and a log full of those would bury the jobs that did.
+        MigrationDiagnostics::begin(
+            $migration->id,
+            $batch->entity_type,
+            "batch {$batch->batch_number} (id {$batch->id}, attempt {$batch->attempts})",
+        );
+
         $migrator = $registry->make($batch->entity_type);
 
         $entity = MigrationEntity::firstOrCreate(
@@ -175,6 +192,7 @@ class ProcessBatchJob implements ShouldQueue
             $page = $this->fetchPage($migrator, $migration, $batch, $entity);
         } catch (Throwable $e) {
             $this->abandonOrRetry($migration, $batch, "Fetch failed: {$e->getMessage()}", $e);
+            MigrationDiagnostics::finish('fetch failed: '.$e->getMessage());
 
             return;
         }
@@ -203,6 +221,7 @@ class ProcessBatchJob implements ShouldQueue
                 // resumed run had no free slot and went nowhere until the
                 // watchdog noticed ten minutes later.
                 $batch->update(['status' => 'pending']);
+                MigrationDiagnostics::finish('handed back (run cancelled or paused)');
 
                 return;
             }
@@ -218,6 +237,8 @@ class ProcessBatchJob implements ShouldQueue
                 $batch->update(['processed_offset' => $baseOffset + $index + 1]);
                 $this->recordDeletedAtSource($migration, $batch->entity_type, $wooId);
             } else {
+                $itemStartedAt = microtime(true);
+
                 try {
                     $result = $migrator->migrateItem($migration, $wooItem);
                 } catch (ShopifyThrottledException $e) {
@@ -225,13 +246,24 @@ class ProcessBatchJob implements ShouldQueue
                     // burn an attempt. The saved offset means we resume, not
                     // restart, and the lease means nobody else takes the chunk
                     // while we are waiting.
-                    if (! $this->throttleBudgetRemains($batch)) {
+                    $stalledWaits = $this->registerThrottleWait($batch);
+
+                    if ($stalledWaits > $this->giveUpAfter()) {
                         $this->giveUpOnThrottle($migration, $batch);
 
                         return;
                     }
 
-                    $this->continueInNewJob($batch, (int) ceil($e->retryAfterSeconds));
+                    $delay = ThrottleBackoff::delayFor($e, $stalledWaits);
+
+                    MigrationDiagnostics::bump('throttle_waits');
+                    MigrationDiagnostics::add('throttle_seconds', $delay);
+                    MigrationDiagnostics::note(
+                        ($e->measured ? 'shopify asked for ' : 'soft throttle, probing in ').$delay.'s',
+                    );
+
+                    $this->continueInNewJob($batch, $delay);
+                    MigrationDiagnostics::finish('paused on throttle');
 
                     return;
                 } catch (Throwable $e) {
@@ -247,6 +279,8 @@ class ProcessBatchJob implements ShouldQueue
                 // are derived from the mapping table those records would simply be
                 // missing with nothing to show it.
                 $batch->update(['processed_offset' => $baseOffset + $index + 1]);
+
+                MigrationDiagnostics::record($wooId, microtime(true) - $itemStartedAt);
 
                 $this->recordResult($migration, $batch->entity_type, $wooId, $result);
             }
@@ -264,6 +298,7 @@ class ProcessBatchJob implements ShouldQueue
             if ($now - $startedAt >= self::TIME_BUDGET_SECONDS) {
                 MigrationRunner::syncCounters($migration, $entity);
                 $this->continueInNewJob($batch);
+                MigrationDiagnostics::finish('handed over on time budget');
 
                 return;
             }
@@ -276,6 +311,7 @@ class ProcessBatchJob implements ShouldQueue
         MigrationRunner::syncCounters($migration, $entity);
         MigrationRunner::refreshEntityStatus($migration, $entity);
         MigrationRunner::advance($migration->id);
+        MigrationDiagnostics::finish('chunk completed');
     }
 
     /**
@@ -325,13 +361,20 @@ class ProcessBatchJob implements ShouldQueue
     }
 
     /**
-     * Whether this batch may pause for throttling again.
+     * Record one throttle pause and report how many CONSECUTIVE ones this batch
+     * has now had without migrating anything in between.
      *
-     * Only pauses that migrated NOTHING since the last one count against the
-     * budget: a large order batch on a small Shopify plan will legitimately be
-     * throttled dozens of times, and each of those pauses is doing its job.
+     * Only pauses that migrated NOTHING since the last one count: a large order
+     * batch on a small Shopify plan will legitimately be throttled dozens of
+     * times, and each of those pauses is doing its job. Progress resets the run
+     * to zero, which is what makes the number mean "we are stuck" rather than
+     * "this shop is busy".
+     *
+     * The count drives two separate things — how long to wait next
+     * (throttleDelay) and when to stop waiting at all (giveUpAfter) — so it is
+     * returned rather than judged here.
      */
-    private function throttleBudgetRemains(MigrationBatch $batch): bool
+    private function registerThrottleWait(MigrationBatch $batch): int
     {
         $key = $this->throttleKey($batch);
         $state = SafeCache::get($key, ['waits' => 0, 'offset' => -1]);
@@ -347,10 +390,18 @@ class ProcessBatchJob implements ShouldQueue
         // never to trouble a batch that is genuinely making progress. Every
         // resume re-claims, so this keeps counting even across handovers.
         if (! SafeCache::put($key, $state, now()->addDay())) {
-            return (int) $batch->attempts <= self::MAX_CLAIMS_WITHOUT_CACHE;
+            return (int) $batch->attempts > self::MAX_CLAIMS_WITHOUT_CACHE
+                ? PHP_INT_MAX
+                : 1;
         }
 
-        return $state['waits'] <= self::MAX_STALLED_THROTTLE_WAITS;
+        return (int) $state['waits'];
+    }
+
+    /** Consecutive stalled waits after which the batch is abandoned. */
+    private function giveUpAfter(): int
+    {
+        return self::MAX_STALLED_THROTTLE_WAITS + ThrottleBackoff::rampAllowance();
     }
 
     /**
@@ -371,12 +422,13 @@ class ProcessBatchJob implements ShouldQueue
             $migration->id,
             'error',
             $batch->entity_type,
-            "Batch {$batch->batch_number} was rate limited ".self::MAX_STALLED_THROTTLE_WAITS
+            "Batch {$batch->batch_number} was rate limited ".$this->giveUpAfter()
                 .' times without migrating anything, so it was stopped. Use "Retry failed items" once your '
                 .'Shopify store is less busy — the rest of this migration is continuing.',
         );
 
         MigrationRunner::advance($migration->id);
+        MigrationDiagnostics::finish('gave up: permanently throttled');
     }
 
     private function throttleKey(MigrationBatch $batch): string
@@ -453,8 +505,19 @@ class ProcessBatchJob implements ShouldQueue
         $cached = SafeCache::get($key);
 
         if (is_array($cached)) {
+            MigrationDiagnostics::bump('page_cache_hits');
+
             return $this->capToAllowance($cached, $batch, $entity, $migration);
         }
+
+        // A MISS here means this job is about to re-download the whole chunk from
+        // the merchant's store before it can migrate its next record. A chunk
+        // routinely takes many jobs (a 35s budget, plus one handover per throttle
+        // pause), so a page that will not cache turns one download into dozens —
+        // and it is silent from the outside, which is why it is counted here as
+        // well as explained once in cachePage().
+        MigrationDiagnostics::bump('page_cache_misses');
+        MigrationDiagnostics::note('page cache MISS — re-read the chunk from WooCommerce');
 
         $ids = $this->sourceIds($migrator, $migration, $batch);
 
@@ -749,6 +812,16 @@ class ProcessBatchJob implements ShouldQueue
             "Batch {$batch->batch_number} failed: ".($e?->getMessage() ?? 'unknown error'),
         );
 
+        // The queue killed the job (timeout, out of tries), so handle() never got
+        // to write its own line. Start one here purely to record HOW it died —
+        // "ProcessBatchJob has timed out" with no worker or entity attached is the
+        // least useful sentence in the log.
+        MigrationDiagnostics::begin(
+            $batch->migration_id,
+            $batch->entity_type,
+            "batch {$batch->batch_number} (id {$batch->id})",
+        );
         MigrationRunner::advance($batch->migration_id);
+        MigrationDiagnostics::finish('queue gave up: '.($e?->getMessage() ?? 'unknown error'));
     }
 }

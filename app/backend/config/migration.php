@@ -12,6 +12,65 @@ return [
     // queue worker the jobs still execute one after another.
     'max_concurrency' => (int) env('MIGRATION_MAX_CONCURRENCY', 8),
 
+    // --- How the parallel worker count is derived ---
+    //
+    // A shop can sustain `restoreRate / write_points` writes per second, and each
+    // write occupies a worker for `write_seconds` — multiply the two and you get
+    // the workers needed to keep the shop's API budget saturated.
+    //
+    // `write_seconds` was 0.6, and that was the single reason a VPS running eight
+    // queue workers only ever had THREE of them busy. A Standard Shopify store
+    // restores 100 points/second, so the old arithmetic derived
+    // ceil(100/20 * 0.6) = 3 concurrent batches — and the other five workers had
+    // nothing they were allowed to pick up. Worse, 3 workers only consume about
+    // 24% of that store's actual budget, so the app was pacing itself far below
+    // the limit it was trying to respect.
+    //
+    // 0.6s is simply not how long a Shopify write takes: productSet runs
+    // SYNCHRONOUSLY while Shopify downloads every image on the product, which is
+    // seconds, not milliseconds (the estimate's own baseline says 2.5s). The
+    // default below is deliberately still conservative — it roughly doubles the
+    // parallelism on a Standard store rather than jumping to the ceiling — and it
+    // is a setting now, because the honest number depends on image sizes more
+    // than on anything in this app.
+    //
+    // Two independent safety nets sit under this: ShopifyClient::pace() eases off
+    // as the point bucket drains, and a THROTTLED response is retried with the
+    // wait Shopify itself computes. Raising this cannot silently overrun the API.
+    'shopify_write_points' => (float) env('MIGRATION_SHOPIFY_WRITE_POINTS', 20),
+    'shopify_write_seconds' => (float) env('MIGRATION_SHOPIFY_WRITE_SECONDS', 1.2),
+
+    // Per-entity ceiling ON TOP of the number above, for the entities Shopify
+    // meters SEPARATELY from the GraphQL point budget.
+    //
+    // orderCreate is the only one that matters today: it has its own small rate
+    // limit, reported as a plain userError, so running orders wide just converts
+    // the extra workers into throttle errors. This is the reason an order
+    // migration uses ~2 workers while eight are running, which looks like a bug
+    // and is not — but it is now a SETTING rather than a constant, because the
+    // right number differs between a development store (very low) and a Plus
+    // one, and finding out costs a re-deploy otherwise.
+    'entity_concurrency' => [
+        'order' => (int) env('MIGRATION_ORDER_CONCURRENCY', 2),
+    ],
+
+    // What to wait, in seconds, after Shopify soft-rate-limits a mutation —
+    // "Too many attempts. Please try again later." on orderCreate, above all.
+    //
+    // Shopify sends NO Retry-After with these, so any number here is a guess,
+    // and the guess used to be a flat 60s: on a store whose window is actually
+    // shorter, every single one of those cost most of a minute of doing nothing
+    // while still holding a concurrency slot. The ladder probes early and backs
+    // off only when the early probe was refused, so a fast store recovers in
+    // seconds and a genuinely slow one still ends up waiting a minute.
+    'soft_throttle_backoff' => [5, 10, 20, 40, 60],
+
+    // Write one `debug` log line per queue job (see App\Support\MigrationDiagnostics):
+    // which worker ran it, how long it spent in Shopify vs WooCommerce vs waiting
+    // out a throttle, and what it handed on. This is what the admin panel's
+    // developer log is built from, so turning it off blinds that page.
+    'debug_log' => (bool) env('MIGRATION_DEBUG_LOG', true),
+
     // Biggest serialized WooCommerce page we will park in the cache between the
     // jobs of one batch. Caching it saves re-downloading the page on every 35s
     // resume, which on a slow host is most of the batch's cost.

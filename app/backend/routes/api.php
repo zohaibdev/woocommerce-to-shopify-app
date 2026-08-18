@@ -99,6 +99,10 @@ Route::prefix('admin')->group(function () {
 
         // Migrations & error logs
         Route::get('/migrations', [AdminMigrationController::class, 'index']);
+        // Before /{id}: a literal segment must be registered ahead of the
+        // wildcard or "debug" is matched as an id.
+        Route::get('/migrations/{id}/debug', [AdminMigrationController::class, 'debug']);
+        Route::get('/migrations/{id}/debug-log', [AdminMigrationController::class, 'debugLog']);
         Route::get('/migrations/{id}', [AdminMigrationController::class, 'show']);
         Route::get('/errors', [AdminMigrationController::class, 'errors']);
 

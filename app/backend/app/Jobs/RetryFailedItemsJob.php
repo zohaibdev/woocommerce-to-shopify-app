@@ -10,7 +10,9 @@ use App\Models\MigrationEntity;
 use App\Models\MigrationItem;
 use App\Models\StoreMigration;
 use App\Services\Exceptions\ShopifyThrottledException;
+use App\Support\MigrationDiagnostics;
 use App\Support\SourceHealth;
+use App\Support\ThrottleBackoff;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -91,6 +93,7 @@ class RetryFailedItemsJob implements ShouldQueue
         }
 
         SourceHealth::within($migration->id);
+        MigrationDiagnostics::begin($migration->id, $this->resumeEntity, 'retry sweep (after id '.$this->afterId.')');
 
         // Whole batches that never got read come first — see reviveFailedBatches().
         // Only on the FIRST pass: a batch that fails again during the retry is
@@ -190,6 +193,7 @@ class RetryFailedItemsJob implements ShouldQueue
         }
 
         FinalizeMigrationJob::dispatch($migration->id);
+        MigrationDiagnostics::finish('retry sweep complete');
     }
 
     /**
@@ -204,7 +208,11 @@ class RetryFailedItemsJob implements ShouldQueue
         int $chunkEnd,
         int $delay,
     ): void {
-        if ($this->throttleWaits >= self::MAX_THROTTLE_WAITS) {
+        // The ramp is added to the budget, not spent out of it — see
+        // ThrottleBackoff::rampAllowance(). Counting the short probes against
+        // MAX_THROTTLE_WAITS would sweep past a chunk on a store with a genuine
+        // sixty-second window after about two minutes of trying.
+        if ($this->throttleWaits >= self::MAX_THROTTLE_WAITS + ThrottleBackoff::rampAllowance()) {
             MigrationRunner::log(
                 $migration->id,
                 'warning',
@@ -343,7 +351,12 @@ class RetryFailedItemsJob implements ShouldQueue
             try {
                 $result = $migrator->migrateItem($migration, $wooItem);
             } catch (ShopifyThrottledException $e) {
-                return max(1, (int) ceil($e->retryAfterSeconds));
+                // Same ladder as ProcessBatchJob, and shared rather than copied:
+                // a soft throttle carries no timing from Shopify, so lowering the
+                // client's first guess without this would have made the sweep
+                // hammer a busy store every five seconds and then abandon the
+                // chunk five times sooner than before.
+                return ThrottleBackoff::delayFor($e, $this->throttleWaits + 1);
             } catch (Throwable $e) {
                 $result = MigrationItemResult::failed($e->getMessage());
             }

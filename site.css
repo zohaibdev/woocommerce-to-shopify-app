@@ -1,5 +1,5 @@
 /* ============================================================================
-   Store Shift — shared styles for the public site (landing, legal, docs).
+   Shift Shop — shared styles for the public site (landing, legal, docs).
    The embedded Shopify app has its own Polaris styling and never loads this.
    ========================================================================== */
 
@@ -8,9 +8,15 @@
   --muted:#5b6478;
   --line:#e6e8ef;
   --line-soft:#f0f2f7;
-  --brand:#2d3561;
-  --accent:#0f7b6c;
-  --accent-soft:#e6f4f1;
+  /* Shift Shop blue. One token drives the logo tile, every button, every link
+     and the plan highlight, so the brand colour is changed here and nowhere
+     else. --accent-strong is the hover/active shade, --accent-soft the tint
+     used behind icons, callouts and success messages. */
+  --brand:#025ec3;
+  --accent:#025ec3;
+  --accent-strong:#0149a0;
+  --accent-soft:#e8f1fd;
+  --accent-ink:#013f8a;
   --dark:#1a1f36;
   --bg-soft:#f7f8fb;
   --radius:14px;
@@ -43,8 +49,9 @@ img{max-width:100%}
 }
 .brand{display:flex; align-items:center; gap:10px; font-weight:700; font-size:19px; text-decoration:none}
 .brand .logo{
-  width:34px; height:34px; border-radius:9px; display:grid; place-items:center;
-  background:linear-gradient(135deg,var(--brand),var(--accent)); color:#fff; font-size:17px;
+  /* The mark is an SVG that carries its own blue plate, so no gradient or glyph
+     centring here any more — just the size and the rounded corner. */
+  width:34px; height:34px; border-radius:9px; display:block; flex:0 0 auto;
 }
 .nav-links{display:flex; gap:26px; align-items:center}
 .nav-links a{text-decoration:none; color:var(--muted); font-weight:500; font-size:15px}
@@ -128,7 +135,7 @@ img{max-width:100%}
   background:#fff; border:1px solid var(--line); border-radius:var(--radius);
   padding:28px; display:flex; flex-direction:column; position:relative;
 }
-.plan.featured{border-color:var(--accent); box-shadow:0 10px 30px rgba(15,123,108,.13)}
+.plan.featured{border-color:var(--accent); box-shadow:0 10px 30px rgba(2,94,195,.16)}
 .plan .tag{
   position:absolute; top:-11px; left:50%; transform:translateX(-50%);
   background:var(--accent); color:#fff; font-size:12px; font-weight:700;
@@ -211,7 +218,7 @@ details p{color:var(--muted); margin-top:11px; font-size:15px}
 .field input:focus,.field textarea:focus{outline:2px solid var(--accent); outline-offset:-1px; border-color:transparent}
 .field textarea{min-height:150px; resize:vertical}
 .form-msg{padding:13px 16px; border-radius:10px; font-size:14.5px; display:none}
-.form-msg.ok{display:block; background:var(--accent-soft); color:#0b5e53}
+.form-msg.ok{display:block; background:var(--accent-soft); color:var(--accent-ink)}
 .form-msg.err{display:block; background:#fdecec; color:#a12525}
 
 /* ---------- footer ---------- */

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Documentation — Store Shift</title>
-<meta name="description" content="Complete documentation for Store Shift: how migrations work, what maps to what, plan limits, error handling, the API, and troubleshooting." />
+<title>Documentation — Shift Shop</title>
+<meta name="description" content="Complete documentation for Shift Shop: how migrations work, what maps to what, plan limits, error handling, the API, and troubleshooting." />
 <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 <link rel="stylesheet" href="/site.css" />
 </head>
@@ -12,7 +12,7 @@
 
 <header class="nav">
   <div class="nav-inner">
-    <a class="brand" href="/"><span class="logo">⇄</span><span>Store Shift</span></a>
+    <a class="brand" href="/"><img class="logo" src="/logo.svg" alt="" width="34" height="34" /><span>Shift Shop</span></a>
     <nav class="nav-links">
       <a href="/#features">Features</a>
       <a href="/#pricing">Pricing</a>
@@ -24,7 +24,7 @@
 <div class="page-head">
   <div class="wrap">
     <h1>Documentation</h1>
-    <p class="meta">Everything Store Shift does, how it does it, and what to do when it doesn't.</p>
+    <p class="meta">Everything Shift Shop does, how it does it, and what to do when it doesn't.</p>
   </div>
 </div>
 
@@ -54,7 +54,7 @@
 
   <h2 id="overview">1. Overview</h2>
   <p>
-    Store Shift is an embedded Shopify app that copies data from a WooCommerce store into a Shopify
+    Shift Shop is an embedded Shopify app that copies data from a WooCommerce store into a Shopify
     store. It reads WooCommerce through its REST API v3 and writes to Shopify through the Admin
     GraphQL API.
   </p>
@@ -87,15 +87,15 @@
   <h3>Step 1 — Create WooCommerce API keys</h3>
   <p>In WordPress admin go to <strong>WooCommerce → Settings → Advanced → REST API → Add key</strong>:</p>
   <ul>
-    <li><strong>Description</strong> — anything, e.g. "Store Shift"</li>
+    <li><strong>Description</strong> — anything, e.g. "Shift Shop"</li>
     <li><strong>User</strong> — an administrator account</li>
-    <li><strong>Permissions</strong> — <code>Read</code> is enough; Store Shift never writes to WooCommerce</li>
+    <li><strong>Permissions</strong> — <code>Read</code> is enough; Shift Shop never writes to WooCommerce</li>
   </ul>
   <p>Copy the consumer key (<code>ck_…</code>) and secret (<code>cs_…</code>) — WooCommerce shows the secret only once.</p>
 
   <h3>Step 2 — Connect the store</h3>
   <p>
-    In Store Shift open <strong>WooCommerce</strong>, paste the store URL, key and secret, then press
+    In Shift Shop open <strong>WooCommerce</strong>, paste the store URL, key and secret, then press
     <strong>Test connection</strong>. On success you will see your WooCommerce and WordPress versions.
     Your credentials are encrypted before they are stored and are only ever shown back masked.
   </p>
@@ -138,13 +138,49 @@
       </tr>
       <tr>
         <td>Orders</td><td>Shopify orders</td>
-        <td>Line items, shipping lines, billing and shipping addresses, currency, financial status, original order date, a matching sale transaction for paid orders, tags</td>
+        <td>Line items, shipping lines, billing and shipping addresses, currency, financial status, original order date, a matching sale transaction for paid orders, tax lines, discount codes, tags</td>
+      </tr>
+      <tr>
+        <td>Coupons</td><td>Discount codes</td>
+        <td>Percentage, fixed-cart and fixed-product coupons with their amount, usage limits and expiry. Restrictions Shopify cannot express are named in a warning on the record rather than dropped silently</td>
+      </tr>
+      <tr>
+        <td>Blogs</td><td>Shopify blogs</td>
+        <td>Your WordPress post categories become blogs. Selecting blogs also selects blog posts, and vice versa &mdash; a blog with no posts in it is an empty container</td>
+      </tr>
+      <tr>
+        <td>Blog posts</td><td>Shopify articles</td>
+        <td>Title, body, excerpt, original publish date, URL handle, featured image, SEO title and description. Comments are stored as data on the article</td>
+      </tr>
+      <tr>
+        <td>Product reviews</td><td>A product metafield</td>
+        <td>Rating, author, date, verified flag and content for every review, saved onto the product. Requires Products to be migrated as well</td>
       </tr>
     </tbody>
   </table>
   <div class="note">
     <strong>Variants, options and images are not separate choices.</strong> They are migrated inline
     with each product in a single operation, which is faster and avoids half-built products.
+  </div>
+  <div class="note">
+    <strong>Shopify has no built-in product reviews.</strong> The Admin API cannot create them, and
+    Shopify's own reviews app was retired &mdash; so reviews are preserved as structured data on each
+    product instead of being thrown away. Displaying them on your storefront needs a review app or a
+    theme block that reads the <code>woocommerce.reviews</code> metafield. Reviews attach to products,
+    so Products must be part of the same migration.
+  </div>
+  <div class="note">
+    <strong>Images inside descriptions are optional.</strong> By default a product or category
+    description keeps pointing at the images on your WooCommerce store, which breaks if you switch
+    that store off. Tick <em>Copy images embedded in descriptions</em> in the wizard to upload them to
+    Shopify and rewrite the links. It costs one upload per new image, so it is off by default; the
+    same image reused across the catalogue is only ever uploaded once.
+  </div>
+  <div class="note">
+    <strong>Image size is the biggest lever you have over speed.</strong> Shopify downloads every
+    image itself before a product is saved, so the wizard lets you choose the resized copies
+    WordPress already generated (Standard, up to 1024px), Large, or the original files. Original is
+    the slowest option by a wide margin.
   </div>
 
   <h2 id="mapping">5. Field mapping reference</h2>
@@ -183,7 +219,7 @@
   </table>
   <p>
     Phone numbers are the most common source of customer rejections. WooCommerce stores whatever the
-    shopper typed ("0300 1234567"); Shopify requires international format. Store Shift uses the
+    shopper typed ("0300 1234567"); Shopify requires international format. Shift Shop uses the
     billing country to add the correct calling code and strip the national trunk prefix. If a number
     still cannot be made valid it is left out and the customer is migrated without it.
   </p>
@@ -217,9 +253,10 @@
   <h2 id="not-migrated">6. What is not migrated</h2>
   <ul>
     <li><strong>Customer passwords</strong> — WooCommerce and Shopify hash passwords in incompatible ways. This is not a limitation we can remove; your customers set a new password on first login.</li>
-    <li><strong>Themes and design</strong>, page and blog content, menus.</li>
-    <li><strong>Discount codes and coupons</strong>, gift cards, subscriptions.</li>
-    <li><strong>Product reviews.</strong></li>
+    <li><strong>Themes and design</strong>, menus, and standalone WordPress pages.</li>
+    <li><strong>Gift cards and subscriptions.</strong></li>
+    <li><strong>Review ratings as Shopify's own review system</strong> &mdash; Shopify does not have
+      one. The review data itself is migrated onto each product; see section 4.</li>
     <li><strong>Refund records</strong> attached to orders (the order's status is migrated, the individual refund transactions are not).</li>
     <li><strong>SEO redirects</strong> from old WooCommerce URLs.</li>
     <li><strong>Anything in WooCommerce plugins</strong> that is not exposed through the REST API.</li>
@@ -266,7 +303,7 @@ Finalize
   <h2 id="idempotency">8. Re-running and idempotency</h2>
   <p>
     Every migrated record is written to a mapping table keyed by
-    <code>(shop, entity type, WooCommerce ID)</code>. Before creating anything, Store Shift looks the
+    <code>(shop, entity type, WooCommerce ID)</code>. Before creating anything, Shift Shop looks the
     record up.
   </p>
   <table>
@@ -282,8 +319,8 @@ Finalize
 
   <h2 id="resilience">9. Error handling and field shedding</h2>
   <p>
-    Real WooCommerce stores contain data Shopify refuses. Rather than failing the whole record, Store
-    Shift removes the offending <em>optional</em> field and tries again, up to three rounds — so
+    Real WooCommerce stores contain data Shopify refuses. Rather than failing the whole record, Shift
+    Shop removes the offending <em>optional</em> field and tries again, up to three rounds — so
     several bad fields are shed one after another. The record lands, and a warning tells you exactly
     what was left out.
   </p>
@@ -303,7 +340,7 @@ Finalize
   </p>
   <p>
     There is one shortcut worth knowing: if several products in a row have their images rejected,
-    Store Shift concludes the store's media is unreachable, logs a warning, and stops sending images
+    Shift Shop concludes the store's media is unreachable, logs a warning, and stops sending images
     for the rest of that run. This roughly halves the work on a store whose uploads folder is gone.
   </p>
 
@@ -316,12 +353,12 @@ Finalize
 
   <h2 id="plans">10. Plans and limits</h2>
   <table>
-    <thead><tr><th>Plan</th><th>Products</th><th>Customers</th><th>Orders</th><th>Metafields</th></tr></thead>
+    <thead><tr><th>Plan</th><th>Products</th><th>Customers</th><th>Orders</th><th>Metafields, coupons, blogs &amp; reviews</th></tr></thead>
     <tbody>
-      <tr><td>Free</td><td>10</td><td>10</td><td>—</td><td>—</td></tr>
-      <tr><td>Basic — $19/mo</td><td>2,000</td><td>2,000</td><td>1,000</td><td>Yes</td></tr>
-      <tr><td>Pro — $49/mo</td><td>20,000</td><td>20,000</td><td>20,000</td><td>Yes</td></tr>
-      <tr><td>Enterprise — $149/mo</td><td>Unlimited</td><td>Unlimited</td><td>Unlimited</td><td>Yes</td></tr>
+      <tr><td>Starter — free</td><td>10</td><td>10</td><td>—</td><td>—</td></tr>
+      <tr><td>Basic — $19/mo</td><td>1,000</td><td>1,000</td><td>1,000</td><td>Yes</td></tr>
+      <tr><td>Enterprise — $149/mo</td><td>10,000</td><td>10,000</td><td>10,000</td><td>Yes</td></tr>
+      <tr><td>Pro — $200/mo</td><td>Unlimited</td><td>Unlimited</td><td>Unlimited</td><td>Yes</td></tr>
     </tbody>
   </table>
   <p>Limits are enforced in three places so they cannot be worked around by accident:</p>
@@ -409,7 +446,7 @@ Finalize
     <li><strong>HMAC verification.</strong> Every OAuth callback and webhook is verified before it is trusted.</li>
     <li><strong>Session-token auth.</strong> Every API call from the embedded app carries a signed Shopify session token, validated on each request.</li>
     <li><strong>Tenant isolation.</strong> Every query is scoped to a single shop.</li>
-    <li><strong>Read-only at the source.</strong> Store Shift never writes to or deletes from your WooCommerce store.</li>
+    <li><strong>Read-only at the source.</strong> Shift Shop never writes to or deletes from your WooCommerce store.</li>
   </ul>
   <p>See the <a href="/privacy/">privacy policy</a> for what is stored and for how long.</p>
 
@@ -420,6 +457,41 @@ Finalize
       <tr>
         <td>"Test connection" fails</td>
         <td>The REST API is not reachable. Check the store is public over HTTPS, not in maintenance mode, and that no security plugin is blocking API requests. Confirm the key has Read permission and has not been revoked.</td>
+      </tr>
+      <tr>
+        <td>Migration is slow, stalls, or many records fail with timeouts</td>
+        <td><strong>Check your WordPress security plugin or firewall first.</strong> A migration reads
+          your whole store through the WooCommerce API &mdash; thousands of requests from one place
+          over several hours &mdash; and security tooling often treats that as an attack and starts
+          throttling or blocking it. Common culprits are security plugins (Wordfence, Sucuri,
+          SolidWP/iThemes, All In One WP Security), rate limiting built into your hosting, a WAF such
+          as Cloudflare, and bot protection that challenges automated requests. Ask your host, or look
+          in your security plugin, for blocked requests to <code>/wp-json/</code>, and allowlist them
+          for as long as the migration runs. Put the protection back to normal afterwards &mdash;
+          there is no need to leave your store unprotected.</td>
+      </tr>
+      <tr>
+        <td>You are emailed "New order" for every migrated order</td>
+        <td>That is Shopify's own <em>staff</em> notification, not something this app sends, and there
+          is no API an app can use to switch it off. Your customers are not emailed &mdash; order
+          confirmations are suppressed on every order we create. Before migrating orders, go to
+          Shopify admin &rarr; Settings &rarr; Notifications &rarr; Staff notifications and turn off
+          "New order", then turn it back on when the migration finishes.</td>
+      </tr>
+      <tr>
+        <td>Orders migrate much more slowly than products</td>
+        <td>Expected, and it is Shopify rather than the app. Order creation is rate limited separately
+          from the ordinary API budget, so an order migration paces itself against that limit however
+          many workers are available &mdash; a catalogue of products can run several times wider than
+          a batch of orders. The estimated time remaining measures each kind of record on its own, so
+          it will lengthen when a run moves from products onto orders. Nothing is lost by leaving it
+          running.</td>
+      </tr>
+      <tr>
+        <td>Product reviews cannot be selected</td>
+        <td>Reviews are stored on the products they belong to, so Products has to be part of the same
+          migration. Select Products &mdash; or, if your plan does not include products, upgrade
+          before migrating reviews.</td>
       </tr>
       <tr>
         <td>Products migrate without images</td>
@@ -474,7 +546,7 @@ Finalize
 <footer class="footer">
   <div class="footer-inner">
     <div class="footer-bottom">
-      <div>© <span id="year"></span> Webnday Pvt. Ltd — Store Shift. All rights reserved.</div>
+      <div>© <span id="year"></span> Webnday Pvt. Ltd — Shift Shop. All rights reserved.</div>
       <div>
         <a href="/privacy/">Privacy</a> ·
         <a href="/terms/">Terms</a> ·

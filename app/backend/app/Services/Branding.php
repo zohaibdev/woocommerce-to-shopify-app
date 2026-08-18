@@ -34,7 +34,7 @@ class Branding
         $stored = self::stored();
 
         return [
-            'name' => $stored['name'] ?? 'Store Shift',
+            'name' => $stored['name'] ?? 'Shift Shop',
             'has_logo' => ! empty($stored['logo_path']),
             // Cache-busted so a replaced logo isn't served from an email client cache.
             'logo_url' => empty($stored['logo_path']) ? null : self::logoUrl($stored['updated'] ?? null),
@@ -61,7 +61,7 @@ class Branding
         AppSetting::write(self::KEY, array_merge($stored, [
             'logo_path' => $path,
             'logo_mime' => $file->getClientMimeType(),
-            'updated' => (string) time(),
+            'updated' => self::version($path),
         ]));
 
         Cache::forget(self::CACHE_KEY);
@@ -74,7 +74,7 @@ class Branding
         self::deleteFile($stored['logo_path'] ?? null);
 
         unset($stored['logo_path'], $stored['logo_mime']);
-        $stored['updated'] = (string) time();
+        $stored['updated'] = self::version('removed');
 
         AppSetting::write(self::KEY, $stored);
         Cache::forget(self::CACHE_KEY);
@@ -83,10 +83,28 @@ class Branding
     public static function setName(string $name): void
     {
         $stored = AppSetting::read(self::KEY);
-        $stored['name'] = trim($name) ?: 'Store Shift';
+        $stored['name'] = trim($name) ?: 'Shift Shop';
 
         AppSetting::write(self::KEY, $stored);
         Cache::forget(self::CACHE_KEY);
+    }
+
+    /**
+     * The cache-busting token in the logo URL.
+     *
+     * Every logo is served from the SAME path (/api/branding/logo), and the route
+     * sends a day of Cache-Control — so to Gmail and Outlook, which proxy and
+     * cache images by URL, a replaced logo is the same image they already have.
+     * The token is what makes the new one a new URL.
+     *
+     * It is built from the stored FILENAME (which Laravel randomises per upload)
+     * as well as the clock, because a timestamp alone cannot distinguish two
+     * uploads inside the same second — and "I re-uploaded it straight away and it
+     * did not change" is precisely how this gets reported.
+     */
+    private static function version(string $path): string
+    {
+        return substr(sha1($path.'|'.now()->getTimestamp()), 0, 12);
     }
 
     /** @return array{0: string, 1: string}|null [absolute path, mime] */

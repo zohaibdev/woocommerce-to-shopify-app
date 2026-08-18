@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Shop;
 use App\Services\Exceptions\ShopifyThrottledException;
+use App\Support\MigrationDiagnostics;
 use Illuminate\Support\Facades\Http;
 
 /**
@@ -13,10 +14,17 @@ use Illuminate\Support\Facades\Http;
 class ShopifyClient
 {
     /**
-     * Wait before retrying a mutation Shopify soft-rate-limited. Orders refill in
-     * small bursts, so a short pause and another attempt beats a long sleep.
+     * FIRST wait after a mutation Shopify soft-rate-limited — deliberately short.
+     *
+     * Shopify sends no Retry-After with these, so this is a guess, and it is
+     * flagged as one (`measured: false`). ProcessBatchJob owns the escalation: it
+     * probes at this interval and backs off towards a minute only once the probe
+     * has been refused. This constant used to BE a flat sixty seconds, which on
+     * an order migration meant roughly five orders of work followed by a minute
+     * of a worker holding a concurrency slot and doing nothing — whether or not
+     * the window had already reopened.
      */
-    private const SOFT_THROTTLE_BACKOFF = 60.0;
+    private const SOFT_THROTTLE_BACKOFF = 5.0;
 
     /**
      * Keep this fraction of the shop's point budget in reserve. Hitting zero
@@ -66,7 +74,10 @@ class ShopifyClient
         // Offline tokens now expire — refresh (or migrate a legacy one) first.
         app(ShopifyTokenService::class)->ensureFresh($this->shop);
 
-        $res = Http::withHeaders([
+        // Timed so the developer log can say how much of a slow run is Shopify
+        // and how much is the merchant's own WooCommerce host — the single most
+        // common wrong guess about why a migration is crawling.
+        $res = MigrationDiagnostics::time('shopify', fn () => Http::withHeaders([
             'X-Shopify-Access-Token' => $this->shop->access_token,
             'Content-Type' => 'application/json',
         ])
@@ -86,10 +97,12 @@ class ShopifyClient
                 // Cast to object so an empty variables set encodes as {} not [];
                 // Shopify rejects a JSON array here with "Invalid variables parameter".
                 'variables' => (object) $variables,
-            ]);
+            ]));
 
         if ($res->status() === 429) {
             $retryAfter = (float) ($res->header('Retry-After') ?: 2);
+            MigrationDiagnostics::bump('shopify_429');
+
             throw new ShopifyThrottledException($retryAfter);
         }
 
@@ -104,6 +117,8 @@ class ShopifyClient
                 $restoreRate = (float) data_get($status, 'restoreRate', 50);
                 $needed = (float) data_get($body, 'extensions.cost.requestedQueryCost', 100);
                 $wait = $restoreRate > 0 ? max(1, ceil(($needed - $available) / $restoreRate)) : 2;
+                MigrationDiagnostics::bump('shopify_cost_throttled');
+
                 throw new ShopifyThrottledException((float) $wait);
             }
         }
@@ -114,7 +129,9 @@ class ShopifyClient
         // like a permanent failure: a run would land ~5 orders, then mark every
         // remaining one failed. It is throttling, so treat it as throttling.
         if (self::looksRateLimited($body)) {
-            throw new ShopifyThrottledException(self::SOFT_THROTTLE_BACKOFF);
+            MigrationDiagnostics::bump('shopify_soft_throttled');
+
+            throw new ShopifyThrottledException(self::SOFT_THROTTLE_BACKOFF, measured: false);
         }
 
         $res->throw();
@@ -163,6 +180,13 @@ class ShopifyClient
         }
 
         $wait = min(($floor - $available) / $restoreRate, self::MAX_PACE_SECONDS);
+
+        // Recorded separately from the call itself: this is time the app chose to
+        // spend, and on a shop with a small bucket it can quietly become most of
+        // the run. Reading it as Shopify being slow would send an operator to fix
+        // the wrong thing.
+        MigrationDiagnostics::bump('pace_waits');
+        MigrationDiagnostics::add('pace_seconds', $wait);
 
         usleep((int) round($wait * 1_000_000));
     }

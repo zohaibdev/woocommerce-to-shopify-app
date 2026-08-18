@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Shift Shop">
+  <!--
+    Shift Shop mark: a shopping bag (the store) with an arrow sweeping through
+    and up out of it (the migration). Drawn as vector rather than shipped as a
+    PNG so it stays crisp at every size, works as the favicon, and can be
+    recoloured from one place.
+
+    The blue is the brand token #025ec3. If it changes, change it here and in
+    the `accent` token in site.css together.
+  -->
+  <rect width="64" height="64" fill="#025ec3"/>
+
+  <g fill="none" stroke="#fff" stroke-width="3.1" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Bag body: slightly flared, generous bottom radius. -->
+    <path d="M20.4 22.5h23.2a3.4 3.4 0 0 1 3.36 2.87l2.63 17.4A7.2 7.2 0 0 1 42.47 51H21.53a7.2 7.2 0 0 1-7.12-8.23l2.63-17.4a3.4 3.4 0 0 1 3.36-2.87z"/>
+    <!-- Handle, with the legs carrying on past the rim into the bag. -->
+    <path d="M24.6 27.6V18.9a7.4 7.4 0 0 1 14.8 0v8.7"/>
+  </g>
+
+  <!--
+    The arrow is FILLED rather than stroked, for two reasons: it has to taper to
+    nothing at the tail (a constant-width stroke cannot), and the head needs a
+    notch where the shaft meets it or the two merge into one blob.
+
+    The tail deliberately stops short of the left edge instead of running off it
+    — bleeding off looks like a crop at favicon size.
+  -->
+  <path fill="#fff" d="M3.4 47.8C18 41.4 32.2 35.2 45.4 29.4L43.0 25.5L57.8 25.2L50.6 38.1L48.2 34.2C34.2 39.6 18.2 44.4 3.4 47.8Z"/>
+</svg>

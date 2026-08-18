@@ -11,6 +11,7 @@ import {
   Text,
 } from "@shopify/polaris";
 import { api, type WooConnection } from "../api/client";
+import SecurityPluginWarning from "../components/SecurityPluginWarning";
 
 export default function WooCommerceConnection() {
   const [storeUrl, setStoreUrl] = useState("");
@@ -126,6 +127,11 @@ export default function WooCommerceConnection() {
             {error}
           </Banner>
         )}
+
+        {/* The connection working is not the same as a MIGRATION working: a
+            single test call sails through protection that throttles ten
+            thousand. */}
+        <SecurityPluginWarning />
 
         <Card>
           <FormLayout>

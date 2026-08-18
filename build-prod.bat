@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 REM ===========================================================================
-REM  Store Shift - production build
+REM  Shift Shop - production build
 REM
 REM  Produces the two things a deploy needs and packs them into
 REM  store-shift-deploy.zip:

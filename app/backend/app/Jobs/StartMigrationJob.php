@@ -8,6 +8,7 @@ use App\Models\MigrationBatch;
 use App\Models\MigrationEntity;
 use App\Models\StoreMigration;
 use App\Services\ShopifyPlan;
+use App\Support\MigrationDiagnostics;
 use App\Support\PlanPool;
 use App\Support\SourceHealth;
 use Illuminate\Bus\Queueable;
@@ -86,6 +87,7 @@ class StartMigrationJob implements ShouldQueue
         // a store that is already struggling is reported before the merchant has
         // watched a dead-looking page for two minutes.
         SourceHealth::within($migration->id);
+        MigrationDiagnostics::begin($migration->id, null, 'start / counting');
 
         // Work out how hard we are allowed to push THIS merchant's Shopify store.
         // The plan name is cosmetic; the numbers that matter (bucket size, restore
@@ -113,6 +115,26 @@ class StartMigrationJob implements ShouldQueue
                 'Your '.($shop->currentPlan()?->name ?? 'current').' plan does not include metafields and brands, '
                     .'so custom WooCommerce fields and brand data will not be copied. Everything else about each '
                     .'product still migrates — upgrade and re-run to add them.',
+            );
+        }
+
+        // The single most alarming thing an order migration does to a merchant's
+        // inbox, and the app cannot stop it: `sendReceipt: false` on orderCreate
+        // suppresses the CUSTOMER's order confirmation (see OrderMigrator), but
+        // Shopify's own "New order" STAFF notification is a store setting with no
+        // Admin API surface at all. Migrating 2,600 historical orders therefore
+        // delivers 2,600 emails to the store owner unless they turn it off first.
+        // Saying so up front is the only remedy that exists.
+        if (in_array('order', $migration->selected_entities ?? [], true)) {
+            MigrationRunner::log(
+                $migration->id,
+                'warning',
+                'order',
+                'Your customers will NOT be emailed about these orders — order confirmations are suppressed. '
+                    .'However, Shopify sends YOU a "New order" staff notification for every order created, and '
+                    .'that setting is not something an app can change. To avoid filling your inbox, turn it off in '
+                    .'Shopify admin → Settings → Notifications → Staff notifications → New order, and turn it back '
+                    .'on when this migration finishes.',
             );
         }
 
@@ -215,6 +237,7 @@ class StartMigrationJob implements ShouldQueue
         // runner as it goes, so work starts within seconds rather than waiting
         // for the whole catalogue to be listed.
         PlanBatchesJob::dispatch($migration->id);
+        MigrationDiagnostics::finish('counting complete, planning dispatched');
     }
 
     /** Never leave a migration stranded in "pending" because planning blew up. */

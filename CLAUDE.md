@@ -1,4 +1,4 @@
-# CLAUDE.md — Store Shift (WooCommerce → Shopify Migration App)
+# CLAUDE.md — Shift Shop (WooCommerce → Shopify Migration App)
 
 > **START HERE:** read **[PROJECT-CONTEXT.json](PROJECT-CONTEXT.json)** first. It is the
 > machine-readable snapshot of everything built so far — architecture, folder layout,

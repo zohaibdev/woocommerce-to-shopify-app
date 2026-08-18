@@ -9,6 +9,7 @@ use App\Models\MigrationEntity;
 use App\Models\MigrationItem;
 use App\Models\Shop;
 use App\Models\StoreMigration;
+use App\Support\ThrottleBackoff;
 use App\Models\WoocommerceConnection;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -249,13 +250,56 @@ class RetrySweepTest extends TestCase
             return Http::response([['id' => 101, 'email' => 'a@example.com']], 200);
         });
 
-        // Ten pauses already spent on this chunk. Throttling that never clears is
-        // not throttling, and pausing forever is just a slower infinite loop.
-        (new RetryFailedItemsJob($migration->id, 'customer', 0, 10))
+        // Throttling that never clears is not throttling, and pausing forever is
+        // just a slower infinite loop — so the chunk is eventually swept past and
+        // the rest of the failures get their turn.
+        //
+        // The bound is DERIVED rather than written down here. The waits now start
+        // short and escalate (ThrottleBackoff), and the ramp is added to the
+        // budget rather than spent out of it: counting the short probes against it
+        // would sweep past a chunk on a store with a genuine sixty-second window
+        // after about two minutes of trying, which is a store that is slow being
+        // reported as one that is broken.
+        $budget = 10 + ThrottleBackoff::rampAllowance();
+
+        (new RetryFailedItemsJob($migration->id, 'customer', 0, $budget))
             ->handle(app(MigratorRegistry::class));
 
         Queue::assertPushed(RetryFailedItemsJob::class, function (RetryFailedItemsJob $job) use ($rowIds) {
             return $job->afterId === $rowIds[2] && $job->throttleWaits === 0;
+        });
+    }
+
+    /** @test */
+    public function the_short_probes_do_not_count_against_the_give_up_budget(): void
+    {
+        Queue::fake();
+
+        $migration = $this->migration();
+        $this->failedCustomers($migration, [101, 102, 103]);
+
+        Http::fake(function ($request) {
+            if (str_contains($request->url(), 'graphql.json')) {
+                return Http::response([
+                    'data' => ['customerCreate' => [
+                        'customer' => null,
+                        'userErrors' => [['field' => null, 'message' => 'Too many attempts. Please try again later.']],
+                    ]],
+                ], 200);
+            }
+
+            return Http::response([['id' => 101, 'email' => 'a@example.com']], 200);
+        });
+
+        // Exactly the old bound. Under the old flat sixty-second wait that WAS ten
+        // minutes of trying; under the ladder it is closer to two, so giving up
+        // here would be abandoning records the store would have accepted.
+        (new RetryFailedItemsJob($migration->id, 'customer', 0, 10))
+            ->handle(app(MigratorRegistry::class));
+
+        Queue::assertPushed(RetryFailedItemsJob::class, function (RetryFailedItemsJob $job) {
+            // Still pointed at the START of the same chunk, still counting.
+            return $job->afterId === 0 && $job->throttleWaits === 11;
         });
     }
 }

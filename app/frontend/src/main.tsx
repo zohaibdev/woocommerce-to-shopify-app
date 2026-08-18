@@ -7,6 +7,12 @@ import enTranslations from "@shopify/polaris/locales/en.json";
 import "@shopify/polaris/build/esm/styles.css";
 import App from "./App";
 import ErrorBoundary from "./ErrorBoundary";
+import { capture } from "./shopContext";
+
+// BEFORE React mounts, and before the router can rewrite the location. Shopify
+// puts `host`/`shop` on the first url only, so this is the single moment at
+// which they are guaranteed to be readable.
+capture();
 
 // Vite sets BASE_URL from vite.config `base` ("/app/" in production, "/" in dev).
 // React Router needs it without the trailing slash so /app/admin resolves.

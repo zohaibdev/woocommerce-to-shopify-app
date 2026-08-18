@@ -20,6 +20,7 @@ import { useNavigate } from "react-router-dom";
 import { api, type EntityCount, type PlanPool } from "../api/client";
 import { formatDuration } from "../duration";
 import { loadSettings } from "../settings";
+import SecurityPluginWarning from "../components/SecurityPluginWarning";
 
 // Variants, options and images are migrated INLINE with each product, so they
 // are not separate choices — listing them created no-op jobs and inflated the
@@ -176,6 +177,20 @@ export default function NewMigration() {
 
     setSelected(next);
   };
+
+  /**
+   * Reviews are stored as a metafield ON a product, so without products there is
+   * nothing for them to attach to — every review would be recorded "the product
+   * was not migrated" and the merchant would have spent a run finding that out.
+   *
+   * Normally ticking Reviews ticks Products too (IMPLIED above). The gap is a
+   * plan that does not include products at all: the implication is deliberately
+   * skipped there rather than refusing the run over an entity the merchant never
+   * chose, which used to leave Reviews selectable and useless. The backend
+   * refuses the same combination, so this is the explanation rather than the
+   * enforcement.
+   */
+  const reviewsNeedProducts = !isSelectable(gate("product"));
 
   const migratableFor = (type: string) => gate(type)?.migratable ?? 0;
   const estimated = selected.reduce((sum, t) => sum + migratableFor(t), 0);
@@ -357,6 +372,38 @@ export default function NewMigration() {
           </Banner>
         )}
 
+        {/* Before the run, not in the failure list afterwards — by then the
+            merchant has already lost hours to it. */}
+        {!loadingCounts && <SecurityPluginWarning />}
+
+        {/*
+          Shown as soon as orders are ticked, not buried in the run's log after
+          the fact — by then the merchant's inbox already has a thousand emails
+          in it and the only remaining question is why we did not say so.
+
+          Two different notifications, and merchants conflate them: the CUSTOMER
+          order confirmation is suppressed by the app (orderCreate is sent with
+          sendReceipt: false), but Shopify's own "New order" staff notification
+          is a store setting with no Admin API surface at all. We cannot turn it
+          off for them, so the honest thing is to name the exact setting.
+        */}
+        {selected.includes("order") && (
+          <Banner tone="warning" title="Turn off your “New order” staff notification first">
+            <BlockStack gap="100">
+              <Text as="p">
+                Your customers will <Text as="span" fontWeight="semibold">not</Text> be emailed —
+                order confirmations are suppressed for every migrated order.
+              </Text>
+              <Text as="p">
+                But Shopify emails <Text as="span" fontWeight="semibold">you</Text> a “New order”
+                staff notification for each one, and no app can change that setting. Before
+                starting, go to Shopify admin → Settings → Notifications → Staff notifications and
+                turn off “New order”. Turn it back on when the migration finishes.
+              </Text>
+            </BlockStack>
+          </Banner>
+        )}
+
         {!loadingCounts && !sourceError && blockedByPlan.length > 0 && (
           <Banner
             tone="warning"
@@ -431,10 +478,15 @@ export default function NewMigration() {
                   choices={ENTITY_OPTIONS.map((o) => ({
                     label: o.label,
                     value: o.value,
-                    helpText: helpTextFor(o),
+                    helpText:
+                      o.value === "review" && reviewsNeedProducts
+                        ? "Reviews are saved onto the products they belong to, so Products must be migrated as well"
+                        : helpTextFor(o),
                     // Off AND unselectable when the plan blocks it — the merchant
                     // is told why in the banner above rather than at submit time.
-                    disabled: !isSelectable(gate(o.value)),
+                    disabled:
+                      !isSelectable(gate(o.value)) ||
+                      (o.value === "review" && reviewsNeedProducts),
                   }))}
                   selected={selected}
                   onChange={enforceDeps}

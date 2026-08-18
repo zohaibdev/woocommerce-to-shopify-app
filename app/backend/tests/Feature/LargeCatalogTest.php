@@ -354,14 +354,23 @@ class LargeCatalogTest extends TestCase
 
         $migration = $this->migration();
 
-        // A Standard-plan shop: 100 points/second works out at three workers.
         $migration->shop->forceFill(['api_restore_rate' => 100, 'api_bucket_size' => 2000])->save();
 
         $this->batches($migration, 'product', 10);
 
         MigrationRunner::advance($migration->id);
 
-        Queue::assertPushed(ProcessBatchJob::class, 3);
+        // Asserted against the DERIVED figure rather than a number typed in here.
+        // This used to expect a literal 3, which is what a Standard store worked
+        // out to under the old write-latency constant — so the day that constant
+        // was corrected (it was understating a Shopify write by 4x and leaving
+        // most of a merchant's API budget unspent) this test failed for a change
+        // that was entirely deliberate, and said nothing about what had broken.
+        // The behaviour worth locking is "fill every slot the shop is allowed".
+        $expected = MigrationRunner::concurrencyFor($migration, 'product');
+
+        $this->assertGreaterThan(1, $expected, 'a measured shop should support real parallelism');
+        Queue::assertPushed(ProcessBatchJob::class, $expected);
     }
 
     public function test_an_entity_never_starts_before_the_one_it_depends_on_finishes(): void
@@ -390,10 +399,16 @@ class LargeCatalogTest extends TestCase
 
         $this->batches($migration, 'product', 10);
 
-        // Two of the three slots are already occupied by live workers.
+        $slots = MigrationRunner::concurrencyFor($migration, 'product');
+        $busy = $slots - 1;
+
+        // All but one slot is already occupied by a live worker, so exactly one
+        // batch may go out. Derived from the shop's real allowance for the same
+        // reason as above — what matters is that in-flight work is SUBTRACTED,
+        // not the particular number it is subtracted from.
         MigrationBatch::where('migration_id', $migration->id)
             ->orderBy('id')
-            ->limit(2)
+            ->limit($busy)
             ->update(['status' => 'processing']);
 
         MigrationRunner::advance($migration->id);
@@ -416,10 +431,18 @@ class LargeCatalogTest extends TestCase
 
         $plan->remember($shop, bucket: 2000, restoreRate: 100);
         $this->assertSame('standard', $plan->tier($shop->fresh()));
-        $this->assertSame(3, $plan->concurrencyFor($shop->fresh()));
+
+        // A measured Standard store must earn more than the unmeasured default —
+        // the exact figure is a tuning constant (see WorkerUtilisationTest), and
+        // pinning it here made an intentional correction look like a regression.
+        $standard = $plan->concurrencyFor($shop->fresh());
+        $this->assertGreaterThan(2, $standard);
 
         $plan->remember($shop->fresh(), bucket: 20000, restoreRate: 1000);
         $this->assertSame('plus', $plan->tier($shop->fresh()));
+
+        // And a bigger plan is never paced slower than a smaller one.
+        $this->assertGreaterThanOrEqual($standard, $plan->concurrencyFor($shop->fresh()));
 
         // A Plus store gets far more headroom, but never more than the ceiling —
         // past that the merchant's WooCommerce host, not Shopify, is the limit.

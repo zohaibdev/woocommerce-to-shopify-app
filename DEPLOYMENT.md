@@ -1,4 +1,4 @@
-# Deploying Store Shift to Hostinger (shared hosting)
+# Deploying Shift Shop to Hostinger (shared hosting)
 
 Landing page: `https://shiftshop.tech/`
 App: `https://shiftshop.tech/app/`

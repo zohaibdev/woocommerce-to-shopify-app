@@ -28,7 +28,7 @@ export default class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, info: ErrorInfo): void {
     // Kept in the console rather than swallowed: this is how the bug behind a
     // "the app went blank" report actually gets found.
-    console.error("Store Shift crashed while rendering", error, info.componentStack);
+    console.error("Shift Shop crashed while rendering", error, info.componentStack);
   }
 
   render() {

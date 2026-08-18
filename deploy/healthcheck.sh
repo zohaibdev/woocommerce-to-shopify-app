@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Store Shift — one-shot health check for a VPS deployment.
+# Shift Shop — one-shot health check for a VPS deployment.
 #
 # Answers, in one screen, the only question that matters after a deploy: is
 # every moving part actually running? A migration is entirely queue-driven, so
@@ -35,7 +35,7 @@ DOMAIN=$(grep -m1 '^APP_URL=' "$APP/.env" 2>/dev/null | sed -E 's#^APP_URL=https
 : "${DOMAIN:=localhost}"
 
 echo
-echo "=============== Store Shift health — $(date '+%F %T') ==============="
+echo "=============== Shift Shop health — $(date '+%F %T') ==============="
 
 # ---------------------------------------------------------------- services
 echo

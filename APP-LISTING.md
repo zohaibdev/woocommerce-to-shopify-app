@@ -1,4 +1,4 @@
-# Store Shift — Shopify App Store Listing Content
+# Shift Shop — Shopify App Store Listing Content
 
 Copy-paste ready. Character counts are shown as `(n/limit)` so you can see the
 headroom before Shopify truncates anything.
@@ -9,14 +9,14 @@ headroom before Shopify truncates anything.
 
 ### App name (30 max)
 ```
-Store Shift
+Shift Shop
 ```
 `(11/30)`
 
 **Backup options if taken:**
 ```
-Store Shift ‑ Woo Migration
-Store Shift Migration
+Shift Shop ‑ Woo Migration
+Shift Shop Migration
 ```
 
 ### App icon
@@ -67,7 +67,7 @@ Bring your whole WooCommerce store to Shopify — catalog, customers, orders and
 > What it does and who it's for. Plain language, no marketing fluff.
 
 ```
-Store Shift moves your WooCommerce store into Shopify — no spreadsheets.
+Shift Shop moves your WooCommerce store into Shopify — no spreadsheets.
 
 Connect your API keys, pick what to migrate, and it runs in the background — close the tab and come back later.
 
@@ -132,9 +132,9 @@ Minimum 3, 1600 × 900 px, taken inside the Shopify admin (embedded).
 
 ### Onboarding / integration
 ```
-1. Install Store Shift from the Shopify App Store.
+1. Install Shift Shop from the Shopify App Store.
 2. In WooCommerce, go to Settings → Advanced → REST API and create a key with Read access.
-3. Paste your store URL, consumer key and consumer secret into Store Shift, then click Test connection.
+3. Paste your store URL, consumer key and consumer secret into Shift Shop, then click Test connection.
 4. Choose the data you want to migrate and start. Progress updates live, and you can close the tab.
 ```
 
@@ -261,7 +261,7 @@ data import
 
 ### SEO title (60 max)
 ```
-Store Shift — WooCommerce to Shopify Migration
+Shift Shop — WooCommerce to Shopify Migration
 ```
 `(46/60)`
 
@@ -324,7 +324,7 @@ Google Tag Manager:   (leave blank)
 
 ### Test store / login instructions
 ```
-Store Shift needs a WooCommerce store as the data source. We have prepared a test
+Shift Shop needs a WooCommerce store as the data source. We have prepared a test
 store with sample products, variants, images, categories, customers, orders,
 coupons and blog posts.
 
@@ -388,7 +388,7 @@ see the standard Shopify approval screen.
 
 ---
 
-## What Store Shift does *not* migrate
+## What Shift Shop does *not* migrate
 
 > Not a listing field — this is for the FAQ, the `/developers/` page and the
 > reviewer notes. Every item here is something a merchant WILL hit, and finding
@@ -436,5 +436,5 @@ see the standard Shopify approval screen.
    `PLAN_SEED_OVERWRITE=true` (which resets every other limit too, so prefer the
    admin panel).
 
-> Legal entity across all public pages: **Webnday Pvt. Ltd**, with Store Shift as
+> Legal entity across all public pages: **Webnday Pvt. Ltd**, with Shift Shop as
 > its product. No registered address or named jurisdiction is published.

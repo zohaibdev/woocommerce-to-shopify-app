@@ -69,7 +69,7 @@ export default function InstallPrompt() {
               </span>
             </Box>
             <Text as="h1" variant="headingLg" alignment="center">
-              Open Store Shift
+              Open Shift Shop
             </Text>
             <Text as="p" tone="subdued" alignment="center">
               This app runs inside your Shopify admin. Enter your store domain to install it or
@@ -105,7 +105,7 @@ export default function InstallPrompt() {
 
           <InlineStack align="center">
             <Button variant="plain" url="/" external>
-              Learn more about Store Shift
+              Learn more about Shift Shop
             </Button>
           </InlineStack>
         </BlockStack>
