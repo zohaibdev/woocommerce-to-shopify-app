@@ -350,6 +350,49 @@ Finalize
     the throttle window and resumes exactly where it stopped. Nothing is lost and nothing is
     duplicated.
   </p>
+  <p>
+    How fast a migration is allowed to run is derived from your store&rsquo;s <strong>real</strong>
+    Shopify API budget, which the app reads from Shopify&rsquo;s own responses rather than assuming.
+    A store on a larger Shopify plan is given a larger budget, so it is migrated faster.
+  </p>
+
+  <h3>Why orders are slower than products</h3>
+  <p>
+    Shopify limits order creation <strong>separately</strong> from the ordinary API budget, and that
+    limit is small. It is also the only limit Shopify does not publish a number for &mdash; it is
+    reported as an ordinary error with no timing attached. So orders carry their own ceiling on how
+    many can be created at once, on top of everything else:
+  </p>
+  <table>
+    <thead><tr><th>Your Shopify plan</th><th>Orders created in parallel</th></tr></thead>
+    <tbody>
+      <tr><td>Basic</td><td>2</td></tr>
+      <tr><td>Grow</td><td>2</td></tr>
+      <tr><td>Advanced</td><td>3</td></tr>
+      <tr><td>Plus</td><td>6</td></tr>
+      <tr><td>Enterprise / Commerce Components</td><td>8</td></tr>
+    </tbody>
+  </table>
+  <div class="note">
+    <strong>This is your Shopify plan, not your Shift Shop plan.</strong> The table in
+    <a href="#plans">section 10</a> is about how many records Shift Shop will migrate for you. This
+    one is about how quickly Shopify lets us create them, and it is set by whichever Shopify plan
+    your store is on. Basic and Grow appear together because Shopify gives them the same API budget.
+  </div>
+  <p>
+    Because Shopify does not publish the order limit, these figures are a starting point rather than
+    a promise. If Shopify refuses at that rate, the migration backs off automatically, waits and
+    tries again &mdash; settling at whatever your store actually allows. That is why an order
+    migration can take considerably longer than a product migration of the same size, and why more
+    servers or more workers do not speed it up: the limit is on Shopify&rsquo;s side, per store.
+  </p>
+  <p>
+    Everything else &mdash; products, collections, customers, coupons and content &mdash; is paced
+    against your <em>WooCommerce</em> store instead, because those are the phases that read heavily
+    from it: a single product means reading its variations and image details as well. So they run
+    considerably wider than orders, but they are limited by what your WordPress host can serve rather
+    than by anything on the Shopify side.
+  </p>
 
   <h2 id="plans">10. Plans and limits</h2>
   <table>
@@ -483,9 +526,11 @@ Finalize
         <td>Expected, and it is Shopify rather than the app. Order creation is rate limited separately
           from the ordinary API budget, so an order migration paces itself against that limit however
           many workers are available &mdash; a catalogue of products can run several times wider than
-          a batch of orders. The estimated time remaining measures each kind of record on its own, so
-          it will lengthen when a run moves from products onto orders. Nothing is lost by leaving it
-          running.</td>
+          a batch of orders. How many orders run in parallel depends on your Shopify plan (see
+          <a href="#resilience">section 9</a>): Basic and Grow are the most conservative, Plus and
+          Enterprise run several times wider. The estimated time remaining measures each kind of
+          record on its own, so it will lengthen when a run moves from products onto orders. Nothing
+          is lost by leaving it running.</td>
       </tr>
       <tr>
         <td>Product reviews cannot be selected</td>

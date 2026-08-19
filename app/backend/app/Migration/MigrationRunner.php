@@ -30,25 +30,6 @@ class MigrationRunner
     public const TERMINAL = ['completed', 'completed_with_errors', 'failed', 'cancelled'];
 
     /**
-     * Order creation is rate limited by Shopify SEPARATELY from the GraphQL point
-     * budget, and that limit is small. Running orders wide just converts the extra
-     * workers into throttle errors, so they stay close to serial no matter how
-     * much headroom the shop's plan has.
-     *
-     * This is the reason an order migration keeps ~2 workers busy while eight are
-     * running, which reads as a bug and is not — but it now comes from
-     * config/migration.php (MIGRATION_ORDER_CONCURRENCY) rather than being welded
-     * into the class, because the right number differs by store and finding it
-     * out should not cost a deploy.
-     *
-     * @return array<string, int>
-     */
-    private static function perEntityCeilings(): array
-    {
-        return array_map('intval', (array) config('migration.entity_concurrency', ['order' => 2]));
-    }
-
-    /**
      * Dispatch the outstanding batches, or finalize when there is none left.
      * Safe to call repeatedly — it only ever looks at persisted state.
      *
@@ -144,19 +125,37 @@ class MigrationRunner
     /**
      * How many batches of this entity may be in flight for this shop.
      *
-     * Derived from the shop's REAL Shopify budget (learned from throttleStatus),
-     * so a Plus merchant is not paced like a Standard one — which was the single
-     * biggest reason a large catalogue took all night.
+     * TWO limits, and the smaller wins.
+     *
+     * The first is the shop's REAL Shopify budget, learned from throttleStatus,
+     * so a Plus merchant is not paced like a Standard one — the single biggest
+     * reason a large catalogue took all night.
+     *
+     * The second is the per-entity ceiling, which exists because Shopify meters
+     * orderCreate SEPARATELY from the GraphQL point budget and that limit is both
+     * small and undocumented. It used to be one flat number for the whole
+     * installation, so a Plus store migrated orders at exactly Basic speed; it is
+     * now resolved per shop from ShopifyPlan::tier(). Nothing about the throttle
+     * handling changed — a tier allowed more than Shopify will actually give it
+     * simply backs off and settles at the real limit.
      */
     public static function concurrencyFor(StoreMigration $migration, string $entityType): int
     {
         $shop = $migration->shop;
 
-        $allowed = $shop
-            ? app(ShopifyPlan::class)->concurrencyFor($shop)
-            : 1;
+        if (! $shop) {
+            return 1;
+        }
 
-        return max(1, min($allowed, self::perEntityCeilings()[$entityType] ?? PHP_INT_MAX));
+        $plan = app(ShopifyPlan::class);
+
+        // Unchanged shape: the smaller of what the shop's API budget supports and
+        // what this entity is separately allowed. Only the second number learned
+        // to vary by plan.
+        return max(1, min(
+            $plan->concurrencyFor($shop),
+            $plan->entityCeiling($shop, $entityType),
+        ));
     }
 
     private static function inFlight(int $migrationId, string $entityType): int

@@ -560,7 +560,14 @@ class MigrationDeveloperLog
         $shop = $this->migration->shop;
         $derived = $shop ? app(ShopifyPlan::class)->concurrencyFor($shop) : 1;
 
-        $ceilings = (array) config('migration.entity_concurrency', []);
+        $tier = $shop ? app(ShopifyPlan::class)->tier($shop) : 'standard';
+
+        // Resolved rather than dumped raw: the config now holds a per-tier map,
+        // and printing that map would leave the operator to work out which row
+        // applies to the shop they are looking at.
+        $ceilings = collect((array) config('migration.entity_concurrency', []))
+            ->map(fn ($_, $entity) => ShopifyPlan::entityCeilingForTier($tier, $entity))
+            ->all();
 
         // What the run is ACTUALLY allowed right now — the entity it has reached
         // decides, and that is the number an operator is trying to reconcile
@@ -569,6 +576,7 @@ class MigrationDeveloperLog
 
         return [
             'shopify plan' => $shop?->shopify_plan ?: 'unknown',
+            'api tier (drives the order ceiling)' => $tier,
             'api bucket size' => $shop?->api_bucket_size ?: 'not measured',
             'api restore rate' => ($shop?->api_restore_rate ?: 'not measured').' pts/s',
             'limits measured at' => (string) ($shop?->limits_checked_at ?? 'never'),

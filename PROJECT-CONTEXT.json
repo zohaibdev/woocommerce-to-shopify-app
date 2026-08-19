@@ -589,6 +589,12 @@
       "issue": "A migration is thousands of API calls and security plugins block it",
       "symptom": "A slow run, or records failing with timeouts, on a store whose connection test passes",
       "fix": "Not a code bug - a WooCommerce-side condition the merchant has to clear themselves. Warned about BEFORE the run (src/components/SecurityPluginWarning.tsx, shown in the wizard and on the connection page) and in /developers/ troubleshooting. Worded as 'allowlist us temporarily' rather than 'disable your security', and it names the usual culprits (Wordfence, Sucuri, SolidWP/iThemes, All In One WP Security, host rate limiting, Cloudflare or another WAF, bot protection) and the path to look for (/wp-json/)."
+    },
+    {
+      "issue": "Order concurrency was one flat number for every Shopify plan",
+      "symptom": "A Plus store with ten times the API budget migrated orders at exactly Basic speed while six of its eight workers sat idle",
+      "cause": "MigrationRunner took min(planDerivedWorkers, entityCeiling). The FIRST half was plan-aware (derived from the shop's measured restore rate); the second was a flat MIGRATION_ORDER_CONCURRENCY=2 for the whole installation, and being the smaller number it always won. Every tier resolved to exactly 2.",
+      "fix": "config/migration.php `entity_concurrency.order` is now a map keyed by ShopifyPlan::tier() — standard 2 (Basic AND Grow, which Shopify gives the same 100 pts/s), advanced 3, plus 6, enterprise 8, each overridable via MIGRATION_ORDER_CONCURRENCY_<TIER>. Resolution lives in ShopifyPlan::entityCeiling()/entityCeilingForTier() so there is ONE tier detection and ONE ceiling table; MigrationRunner, MigrationEstimate and MigrationDeveloperLog all read it through there. The min() shape is unchanged and per-entity ceilings still only ever LOWER the shop-wide number. NOTE the trap this created: MigrationEstimate::workersFor() cast the config value with (int), which on the new array would evaluate to 1 and price the whole order phase as serial — it now resolves through ShopifyPlan too. These numbers are NOT a claim that Shopify's order limit scales with plan (Shopify does not document it at all); they are permission to try, made safe by the existing throttle ladder settling wherever the real limit turns out to be."
     }
   ],
   "blockers_to_going_live": [

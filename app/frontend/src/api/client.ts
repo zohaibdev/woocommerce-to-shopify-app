@@ -171,6 +171,21 @@ export interface WooConnection {
   last_tested_at: string | null;
 }
 
+/**
+ * A CORE entity this store would not count, while others counted fine.
+ *
+ * Distinct from `source_error` on purpose. A refusal on one endpoint while the
+ * same API key reads four others is not a credentials problem by definition, so
+ * it must not be rendered as one — overwhelmingly it is a security plugin, WAF
+ * or rate limiter blocking a single path.
+ */
+export interface BlockedEntity {
+  type: string;
+  /** HTTP status WooCommerce (or whatever refused it) answered with. */
+  status: number | null;
+  reason: string;
+}
+
 export interface EntityCount {
   type: string;
   /** How many records exist in WooCommerce. */
@@ -410,6 +425,11 @@ export const api = {
        * simply cannot be offered.
        */
       unavailable_entities?: string[];
+      /**
+       * Core entities that were refused while others read fine. `source_error`
+       * stays null in that case — the store is demonstrably readable.
+       */
+      blocked_entities?: BlockedEntity[];
     }>("/woocommerce/preview"),
 
   listMigrations: (page = 1, perPage = 10) =>

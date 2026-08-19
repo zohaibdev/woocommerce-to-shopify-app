@@ -10,6 +10,8 @@ use App\Support\SourceHealth;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 /**
  * Thin wrapper over the WooCommerce REST API v3.
@@ -174,11 +176,19 @@ class WooCommerceClient
         // front of them: StartMigrationJob records the entity as failed and
         // writes the reason, and the wizard reports it before they start.
         if (! $res->successful()) {
+            // The real HTTP detail goes to the log whatever we tell the merchant,
+            // because the sentence they see is deliberately non-technical and the
+            // body is often the only thing that names the plugin doing the
+            // blocking ("Access denied by Wordfence", a ModSecurity rule id).
+            Log::warning('WooCommerce refused a count request', [
+                'resource' => $resource,
+                'status' => $res->status(),
+                'store' => $this->connection->store_url,
+                'body' => Str::limit((string) $res->body(), 500),
+            ]);
+
             throw new WooCommerceUnavailableException(
-                $res->status() === 401 || $res->status() === 403
-                    ? 'WooCommerce refused the request (HTTP '.$res->status().'). Check that the API key and '
-                        .'secret are still valid and have Read permission.'
-                    : "WooCommerce returned HTTP {$res->status()} when asked how many {$resource} it has.",
+                self::refusalMessage($resource, $res->status()),
                 $res->status(),
             );
         }
@@ -207,6 +217,44 @@ class WooCommerceClient
             now()->addMinutes(5),
             fn () => $this->countByProbe($resource, $query),
         );
+    }
+
+    /**
+     * What to tell the merchant when WooCommerce would not answer a count.
+     *
+     * 401 and 403 used to share one sentence — "check that the API key and secret
+     * are still valid and have Read permission" — and that is wrong for 403 in
+     * the way that costs the most support time. The two are different failures:
+     *
+     *   401 UNAUTHORIZED means WooCommerce looked at the key and rejected it.
+     *        Credentials really are the thing to check.
+     *
+     *   403 FORBIDDEN means the request was REFUSED, and on a WooCommerce store
+     *        that is very often not WooCommerce talking at all — a security
+     *        plugin, a WAF, ModSecurity or the host's rate limiter answers 403
+     *        before the request ever reaches WordPress. A migration hammering the
+     *        REST API is exactly the traffic that trips those. Telling a merchant
+     *        their keys are invalid while those same keys are visibly migrating
+     *        their catalogue sends them to reissue credentials that were never
+     *        the problem.
+     *
+     * So 403 names the resource that was refused and points at the thing actually
+     * refusing it, and never questions the credentials.
+     */
+    private static function refusalMessage(string $resource, int $status): string
+    {
+        return match ($status) {
+            401 => "WooCommerce rejected the API key when reading {$resource} (HTTP 401). Check that the key "
+                .'and secret are still valid and have not been revoked.',
+
+            403 => "The request for {$resource} was refused (HTTP 403). A 403 is a REFUSAL rather than a "
+                .'rejected key, and on a WooCommerce store it usually comes from a security plugin, a '
+                .'firewall, or host rate limiting, blocking API traffic before WordPress sees it — '
+                ."allowlist requests to /wp-json/ while the migration runs. If other data reads fine, only "
+                ."{$resource} is blocked; it can also mean this API key has no read permission for it.",
+
+            default => "WooCommerce returned HTTP {$status} when asked how many {$resource} it has.",
+        };
     }
 
     /** Keyed by store + resource + filter, never by connection row id — the

@@ -17,7 +17,7 @@ import {
   Checkbox,
 } from "@shopify/polaris";
 import { useNavigate } from "react-router-dom";
-import { api, type EntityCount, type PlanPool } from "../api/client";
+import { api, type BlockedEntity, type EntityCount, type PlanPool } from "../api/client";
 import { formatDuration } from "../duration";
 import { loadSettings } from "../settings";
 import SecurityPluginWarning from "../components/SecurityPluginWarning";
@@ -103,6 +103,7 @@ export default function NewMigration() {
   const [notifyEmail, setNotifyEmail] = useState("");
   const [emailDeliveryConfigured, setEmailDeliveryConfigured] = useState(true);
   const [sourceError, setSourceError] = useState<string | null>(null);
+  const [blocked, setBlocked] = useState<BlockedEntity[]>([]);
   const [loadingCounts, setLoadingCounts] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -112,7 +113,7 @@ export default function NewMigration() {
       .preview()
       .then(({
         counts, plan, pool, shop_email, email_delivery_configured,
-        active_migration_id, source_error, unavailable_entities,
+        active_migration_id, source_error, unavailable_entities, blocked_entities,
       }) => {
         // One run at a time — the API refuses a second with a 409, so there is
         // nothing to be gained by letting the merchant fill the form in first.
@@ -124,6 +125,7 @@ export default function NewMigration() {
 
         setCounts(counts);
         setSourceError(source_error ?? null);
+        setBlocked(blocked_entities ?? []);
         setUnavailable(unavailable_entities ?? []);
         setPlanName(plan?.name ?? null);
         setPool(pool ?? null);
@@ -319,6 +321,33 @@ export default function NewMigration() {
         )}
 
         {/*
+          One endpoint refused while the rest answered. Deliberately NOT the
+          critical banner: the same credentials just read everything else, so
+          calling this a connection failure sends the merchant off to reissue API
+          keys that were never the problem. It is almost always a security plugin
+          or firewall refusing one path.
+        */}
+        {!loadingCounts && !sourceError && blocked.length > 0 && (
+          <Banner tone="warning" title="Part of your store could not be read">
+            <BlockStack gap="200">
+              {blocked.map((b) => (
+                <Text as="p" key={b.type}>
+                  <Text as="span" fontWeight="semibold">
+                    {ENTITY_OPTIONS.find((o) => o.value === b.type)?.label ?? b.type}
+                  </Text>
+                  {" — "}
+                  {b.reason}
+                </Text>
+              ))}
+              <Text as="p" tone="subdued">
+                Your connection itself is working — everything else on this page was read with the
+                same API key. You can still migrate the rest.
+              </Text>
+            </BlockStack>
+          </Banner>
+        )}
+
+        {/*
           A shared budget cannot be understood from any single entity's row: the
           merchant needs to see the one number and what they have left of it,
           otherwise "200 of 800 products" looks like an arbitrary cap rather than
@@ -375,34 +404,6 @@ export default function NewMigration() {
         {/* Before the run, not in the failure list afterwards — by then the
             merchant has already lost hours to it. */}
         {!loadingCounts && <SecurityPluginWarning />}
-
-        {/*
-          Shown as soon as orders are ticked, not buried in the run's log after
-          the fact — by then the merchant's inbox already has a thousand emails
-          in it and the only remaining question is why we did not say so.
-
-          Two different notifications, and merchants conflate them: the CUSTOMER
-          order confirmation is suppressed by the app (orderCreate is sent with
-          sendReceipt: false), but Shopify's own "New order" staff notification
-          is a store setting with no Admin API surface at all. We cannot turn it
-          off for them, so the honest thing is to name the exact setting.
-        */}
-        {selected.includes("order") && (
-          <Banner tone="warning" title="Turn off your “New order” staff notification first">
-            <BlockStack gap="100">
-              <Text as="p">
-                Your customers will <Text as="span" fontWeight="semibold">not</Text> be emailed —
-                order confirmations are suppressed for every migrated order.
-              </Text>
-              <Text as="p">
-                But Shopify emails <Text as="span" fontWeight="semibold">you</Text> a “New order”
-                staff notification for each one, and no app can change that setting. Before
-                starting, go to Shopify admin → Settings → Notifications → Staff notifications and
-                turn off “New order”. Turn it back on when the migration finishes.
-              </Text>
-            </BlockStack>
-          </Banner>
-        )}
 
         {!loadingCounts && !sourceError && blockedByPlan.length > 0 && (
           <Banner
@@ -638,6 +639,34 @@ export default function NewMigration() {
                   migration starts you&rsquo;ll see a live estimate from its actual pace. You can
                   close this page at any time; the migration keeps running.
                 </Text>
+              )}
+              {/*
+                Immediately above the button, and only when Orders are actually
+                being migrated. Two different notifications, and merchants
+                conflate them: the CUSTOMER order confirmation IS suppressed by
+                the app (orderCreate is sent with sendReceipt: false), but
+                Shopify's own "New order" staff notification is a store setting
+                with no Admin API surface at all — so we cannot turn it off for
+                them, and the honest thing is to name the exact setting before
+                they start rather than after their inbox has filled up.
+              */}
+              {selected.includes("order") && (
+                <Banner tone="warning" title="Turn off your “New order” staff notification first">
+                  <BlockStack gap="100">
+                    <Text as="p">
+                      Your customers will <Text as="span" fontWeight="semibold">not</Text> be
+                      emailed about these orders — order confirmations are suppressed for every
+                      order this migration creates.
+                    </Text>
+                    <Text as="p">
+                      But Shopify emails <Text as="span" fontWeight="semibold">you</Text> a “New
+                      order” staff notification for each one, and that setting is not something an
+                      app can change. Before starting, go to Shopify admin → Settings →
+                      Notifications → Staff notifications and turn off “New order”. Turn it back on
+                      when this migration finishes.
+                    </Text>
+                  </BlockStack>
+                </Banner>
               )}
               <InlineStack align="space-between">
                 <Button onClick={() => setStep(1)}>Back</Button>

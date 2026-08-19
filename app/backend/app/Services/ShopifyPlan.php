@@ -154,6 +154,55 @@ class ShopifyPlan
         return max(1, min($workers, $ceiling));
     }
 
+    /**
+     * Ceiling on concurrent batches of ONE entity for this shop.
+     *
+     * Lives here rather than in MigrationRunner because it is a fact about the
+     * merchant's Shopify plan, and plan detection belongs in exactly one class.
+     * The runner, the time estimate and the developer log all resolve the number
+     * through here, so they can never disagree about what a shop is allowed.
+     */
+    public function entityCeiling(Shop $shop, string $entityType): int
+    {
+        return self::entityCeilingForTier($this->tier($shop), $entityType);
+    }
+
+    /**
+     * The same answer for a tier that is already known — the estimate has one
+     * without needing to touch the Shop again.
+     *
+     * PHP_INT_MAX means no ceiling at all, which happens only when nothing is
+     * configured — normally an unnamed entity picks up the `default` bound.
+     */
+    public static function entityCeilingForTier(string $tier, string $entityType): int
+    {
+        $all = (array) config('migration.entity_concurrency', []);
+
+        // An entity with no ceiling of its own falls back to `default`, which is
+        // the source-side bound protecting the merchant's WooCommerce host. Only
+        // entities that name themselves (orders) get to differ from it.
+        $configured = $all[$entityType] ?? $all['default'] ?? null;
+
+        if ($configured === null || $configured === []) {
+            return PHP_INT_MAX;
+        }
+
+        // A plain number is still honoured, so an installation (or a test) that
+        // pins one flat ceiling keeps working exactly as it did.
+        if (! is_array($configured)) {
+            return max(1, (int) $configured);
+        }
+
+        if (isset($configured[$tier])) {
+            return max(1, (int) $configured[$tier]);
+        }
+
+        // An unrecognised tier falls to the LOWEST configured value rather than
+        // whichever happens to be first. Guessing high for a shop we cannot
+        // identify is the one direction that costs throttle errors.
+        return max(1, (int) min(array_map('intval', $configured)));
+    }
+
     /** One line for the migration log, so the merchant can see why it runs at this speed. */
     public function describe(Shop $shop): string
     {

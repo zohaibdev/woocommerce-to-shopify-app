@@ -4,6 +4,7 @@ namespace App\Support;
 
 use App\Models\MigrationItem;
 use App\Models\StoreMigration;
+use App\Services\ShopifyPlan;
 use Illuminate\Support\Carbon;
 
 /**
@@ -129,6 +130,14 @@ class MigrationEstimate
      */
     private const SNAPSHOT_TTL_SECONDS = 15;
 
+    /**
+     * Tier assumed when there is no shop to ask — the wizard's pre-start estimate
+     * on a store whose API limits have not been measured yet. Deliberately the
+     * most conservative one: quoting a Plus-speed number to a Basic store is the
+     * direction that loses trust.
+     */
+    private const DEFAULT_TIER = 'standard';
+
     public static function weightFor(string $entityType): float
     {
         return self::WEIGHTS[$entityType] ?? self::DEFAULT_WEIGHT;
@@ -142,11 +151,17 @@ class MigrationEstimate
      * the ceiling moves the estimate with it instead of leaving the two to
      * disagree.
      */
-    public static function workersFor(string $entityType, int $workers): int
+    public static function workersFor(string $entityType, int $workers, ?string $tier = null): int
     {
-        $ceilings = (array) config('migration.entity_concurrency', []);
-
-        return max(1, min(max(1, $workers), (int) ($ceilings[$entityType] ?? PHP_INT_MAX)));
+        // Resolved through ShopifyPlan so the estimate and the runner can never
+        // disagree about what a shop is allowed. Reading the config directly here
+        // was fine while the ceiling was one number; now that it varies by tier,
+        // a raw (int) cast of the tier MAP would quietly evaluate to 1 and price
+        // the order phase as fully serial.
+        return max(1, min(
+            max(1, $workers),
+            ShopifyPlan::entityCeilingForTier($tier ?? self::DEFAULT_TIER, $entityType),
+        ));
     }
 
     /**
@@ -157,7 +172,7 @@ class MigrationEstimate
      * computed before they have ticked anything. Summing these is sound: the
      * entities run one after another, so their times add.
      */
-    public static function secondsFor(string $entityType, int $count, int $workers): int
+    public static function secondsFor(string $entityType, int $count, int $workers, ?string $tier = null): int
     {
         $count = max(0, $count);
 
@@ -167,7 +182,7 @@ class MigrationEstimate
 
         $modelled = self::spread(
             $count * self::weightFor($entityType) * self::BASELINE_SECONDS_PER_UNIT,
-            self::workersFor($entityType, $workers),
+            self::workersFor($entityType, $workers, $tier),
         );
 
         return max($modelled, self::rateLimitFloor($entityType, $count));
@@ -195,12 +210,12 @@ class MigrationEstimate
      * @param  int  $workers  batches this shop may run in parallel
      * @return array{seconds: int, basis: string, workers: int}|null
      */
-    public static function forPlan(array $countsByEntity, int $workers): ?array
+    public static function forPlan(array $countsByEntity, int $workers, ?string $tier = null): ?array
     {
         $seconds = 0;
 
         foreach ($countsByEntity as $entityType => $count) {
-            $seconds += self::secondsFor((string) $entityType, (int) $count, $workers);
+            $seconds += self::secondsFor((string) $entityType, (int) $count, $workers, $tier);
         }
 
         if ($seconds <= 0) {
@@ -278,7 +293,7 @@ class MigrationEstimate
             // Not started yet. Price it from the model, scaled by how wrong the
             // model turned out to be on the entities that HAVE run — a store
             // running at half the modelled speed will keep doing so.
-            $seconds += self::secondsFor((string) $entityType, $remaining, $workers) * $calibration;
+            $seconds += self::secondsFor((string) $entityType, $remaining, $workers, self::tierOf($migration)) * $calibration;
         }
 
         return [
@@ -306,8 +321,16 @@ class MigrationEstimate
             ->first(fn ($e) => (int) $e->processed_items < (int) $e->total_items)?->entity_type;
 
         return $active
-            ? self::workersFor($active, $workers)
+            ? self::workersFor($active, $workers, self::tierOf($migration))
             : max(1, $workers);
+    }
+
+    /** This shop's Shopify tier, or the conservative default when unknown. */
+    private static function tierOf(StoreMigration $migration): string
+    {
+        return $migration->shop
+            ? app(ShopifyPlan::class)->tier($migration->shop)
+            : self::DEFAULT_TIER;
     }
 
     /**

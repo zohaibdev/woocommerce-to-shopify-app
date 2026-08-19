@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Migration\MigratorRegistry;
+use App\Models\MigrationEntity;
 use App\Models\WoocommerceConnection;
+use App\Services\Exceptions\WooCommerceUnavailableException;
 use App\Services\MailSettings;
 use App\Services\ShopifyPlan;
 use App\Services\WooCommerceClient;
@@ -13,6 +15,7 @@ use App\Support\PlanAllowance;
 use App\Support\PlanPool;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class WooCommerceController extends Controller
 {
@@ -171,13 +174,33 @@ class WooCommerceController extends Controller
         $available = [];
         $unreadable = [];
 
+        // Core entities that answered, and core entities that were refused. Both
+        // are needed: "could not read ONE thing" and "could not read ANYTHING"
+        // are different problems with different fixes, and only the second is a
+        // connection problem.
+        $coreRead = 0;
+        $blocked = [];
+
         foreach ($display as $type) {
             try {
                 $available[$type] = $registry->make($type)->count($connection);
+
+                if (in_array($type, self::CORE_ENTITIES, true)) {
+                    $coreRead++;
+                }
             } catch (\Throwable $e) {
                 $available[$type] = 0;
 
-                // Only a CORE entity failing means the store itself is unreadable.
+                // Whatever the merchant is shown, the operator gets the real one.
+                Log::warning('WooCommerce count failed during preview', [
+                    'shop_id' => $shop->id,
+                    'entity' => $type,
+                    'status' => $e instanceof WooCommerceUnavailableException ? $e->status : null,
+                    'message' => $e->getMessage(),
+                ]);
+
+                // Only a CORE entity failing can mean the store itself is
+                // unreadable.
                 //
                 // Blogs, posts and pages come from `wp/v2`, which a great many
                 // hosts lock down or hide behind a security plugin — and those
@@ -186,10 +209,57 @@ class WooCommerceController extends Controller
                 // orders counted fine got a red "your store could not be read"
                 // banner because its blog endpoint was private.
                 if (in_array($type, self::CORE_ENTITIES, true)) {
-                    $sourceError ??= $e->getMessage();
+                    $blocked[] = [
+                        'type' => $type,
+                        'status' => $e instanceof WooCommerceUnavailableException ? $e->status : null,
+                        'reason' => $e->getMessage(),
+                    ];
                 } else {
                     $unreadable[] = $type;
                 }
+            }
+        }
+
+        // THE STORE IS ONLY "UNREADABLE" WHEN NOTHING CORE COULD BE READ.
+        //
+        // This used to fire on the FIRST core entity that threw, so a store whose
+        // products, categories and customers all counted perfectly was shown a red
+        // "Your WooCommerce store could not be read — check that the API key and
+        // secret are still valid" because one endpoint answered 403. A 403 on one
+        // resource while four others answer is not a credentials problem by
+        // definition: the same key just read four things.
+        //
+        // Reported by merchants with a migration RUNNING AT THE TIME, which is the
+        // clearest possible disproof of the message they were being shown — hence
+        // the second guard below.
+        $activeMigrationId = MigrationController::activeMigrationId($shop);
+
+        if ($coreRead === 0 && $blocked !== []) {
+            $sourceError = $blocked[0]['reason'];
+        }
+
+        // A run that has actually MIGRATED something is live proof the credentials
+        // work and the store answers, so nothing here may claim otherwise however
+        // a background count went. The refusals are still reported, just not as a
+        // connection failure.
+        //
+        // Progress, not merely status. A migration sitting at "processing" proves
+        // nothing on its own — a run whose API keys expired underneath it is stuck
+        // in exactly that state, and suppressing the explanation there would be
+        // the same bug pointing the other way.
+        if ($sourceError !== null && $activeMigrationId !== null) {
+            $hasProgress = MigrationEntity::where('migration_id', $activeMigrationId)
+                ->where('processed_items', '>', 0)
+                ->exists();
+
+            if ($hasProgress) {
+                Log::info('Suppressed a source_error contradicted by a migration in progress', [
+                    'shop_id' => $shop->id,
+                    'migration_id' => $activeMigrationId,
+                    'suppressed' => $sourceError,
+                ]);
+
+                $sourceError = null;
             }
         }
 
@@ -218,7 +288,11 @@ class WooCommerceController extends Controller
 
         // How hard this shop's own Shopify budget lets us push. Needed before the
         // counts, because each one carries its own share of the time estimate.
-        $workers = app(ShopifyPlan::class)->concurrencyFor($shop);
+        $shopifyPlan = app(ShopifyPlan::class);
+        $workers = $shopifyPlan->concurrencyFor($shop);
+        // The order ceiling varies by tier now, so the wizard has to price the
+        // estimate against THIS shop's tier rather than a default one.
+        $tier = $shopifyPlan->tier($shop);
 
         // Ship the plan verdict with the count so the wizard can disable what the
         // merchant cannot migrate instead of failing after they start.
@@ -234,6 +308,7 @@ class WooCommerceController extends Controller
                     $type,
                     (int) ($verdicts[$type]['migratable'] ?? 0),
                     $workers,
+                    $tier,
                 ),
             ] + $verdicts[$type],
             $display,
@@ -245,6 +320,7 @@ class WooCommerceController extends Controller
         $estimate = MigrationEstimate::forPlan(
             array_column($counts, 'migratable', 'type'),
             $workers,
+            $tier,
         );
 
         return response()->json([
@@ -265,9 +341,16 @@ class WooCommerceController extends Controller
             'email_delivery_configured' => MailSettings::canDeliver(),
             // The wizard refuses to start a second run while one is in flight, so
             // it needs to know before the merchant fills the whole form in.
-            'active_migration_id' => MigrationController::activeMigrationId($shop),
-            // Set when the counts could not be read at all — see above.
+            'active_migration_id' => $activeMigrationId,
+            // Set ONLY when nothing core could be read at all — see above. A
+            // single refused endpoint goes in `blocked_entities` instead, because
+            // it is not a connection failure and must not be dressed as one.
             'source_error' => $sourceError,
+            // Core entities this store would not count, while others counted
+            // fine. Overwhelmingly a security plugin, WAF or rate limiter
+            // refusing one path — so the wizard names the endpoint rather than
+            // blaming credentials that are demonstrably working.
+            'blocked_entities' => $blocked,
             // Optional endpoints this store does not expose (usually wp/v2 behind
             // a security plugin). Not an error — the merchant just cannot pick
             // those, and deserves to be told why rather than seeing a blank zero.

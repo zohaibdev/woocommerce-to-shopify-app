@@ -4,13 +4,19 @@ return [
     // Items per WooCommerce API page / Shopify batch write.
     'per_page' => (int) env('MIGRATION_PER_PAGE', 100),
 
-    // Ceiling on how many batch jobs may run at once for ONE shop. The actual
-    // number is derived from the shop's real Shopify budget (see ShopifyPlan),
-    // but past a handful of workers the merchant's WooCommerce host — not
-    // Shopify — becomes the limit, and piling on more only knocks their store
-    // over. Raise this only once you have workers to run them: with a single
-    // queue worker the jobs still execute one after another.
-    'max_concurrency' => (int) env('MIGRATION_MAX_CONCURRENCY', 8),
+    // ABSOLUTE ceiling on how many batch jobs may run at once for ONE shop —
+    // the last word, whatever any per-entity ceiling below says. The working
+    // number is derived from the shop's real Shopify budget (see ShopifyPlan).
+    //
+    // This is deliberately higher than the per-entity default underneath it.
+    // The two guard different things, and while they were the SAME number the
+    // per-entity ceilings could never rise above it: setting the enterprise
+    // order ceiling to 12 did precisely nothing, because this clipped it back
+    // to 8 first. Headroom here is what makes those knobs work at all.
+    //
+    // Raise this only once you have workers to run them: with a single queue
+    // worker the jobs still execute one after another.
+    'max_concurrency' => (int) env('MIGRATION_MAX_CONCURRENCY', 12),
 
     // --- How the parallel worker count is derived ---
     //
@@ -44,14 +50,47 @@ return [
     // meters SEPARATELY from the GraphQL point budget.
     //
     // orderCreate is the only one that matters today: it has its own small rate
-    // limit, reported as a plain userError, so running orders wide just converts
-    // the extra workers into throttle errors. This is the reason an order
-    // migration uses ~2 workers while eight are running, which looks like a bug
-    // and is not — but it is now a SETTING rather than a constant, because the
-    // right number differs between a development store (very low) and a Plus
-    // one, and finding out costs a re-deploy otherwise.
+    // limit, reported as a plain userError with no Retry-After, so running orders
+    // wide can simply convert extra workers into throttle errors.
+    //
+    // KEYED BY ShopifyPlan::tier() — the SAME tier detection the worker count
+    // already uses, never a second copy of it. This used to be one flat number
+    // (MIGRATION_ORDER_CONCURRENCY, default 2) applied to every store on the
+    // installation, which meant a Plus merchant paying for ten times the API
+    // budget migrated orders at exactly Basic speed.
+    //
+    // A word on what these numbers are and are not. Shopify does not document
+    // the order-creation limit at all, so these are NOT a claim that it scales
+    // with plan — they are permission to TRY, made safe by the fact that the
+    // throttle handling underneath settles wherever Shopify actually draws the
+    // line: a refusal pauses the batch, backs off along
+    // migration.soft_throttle_backoff and resumes, and no order is ever lost or
+    // written twice (migration_items is unique per source id). So a tier whose
+    // real limit turns out to be lower simply throttles back down to it.
+    //
+    // Tier names come from ShopifyPlan::TIERS, which is derived from the shop's
+    // measured API restore rate: Basic AND Grow are both `standard` (Shopify
+    // gives them the same 100 points/second), Advanced is `advanced`, and Plus
+    // and Enterprise are their own tiers. A shop whose limits have not been
+    // measured yet reads as `standard`, which is the conservative default.
     'entity_concurrency' => [
-        'order' => (int) env('MIGRATION_ORDER_CONCURRENCY', 2),
+        // The SOURCE-side bound, applied to every entity that does not name its
+        // own ceiling — products, categories, customers, coupons and content.
+        //
+        // This is the one that protects the merchant's WooCommerce host rather
+        // than Shopify: a product batch reads variations and image metadata per
+        // record, so running those wide is what knocks a shared WordPress host
+        // over. It is 8 because that is exactly what these entities were already
+        // limited to when max_concurrency was 8 — raising the absolute ceiling
+        // above must not quietly start hammering merchant stores harder.
+        'default' => (int) env('MIGRATION_SOURCE_CONCURRENCY', 8),
+
+        'order' => [
+            'standard' => (int) env('MIGRATION_ORDER_CONCURRENCY_STANDARD', 2),
+            'advanced' => (int) env('MIGRATION_ORDER_CONCURRENCY_ADVANCED', 3),
+            'plus' => (int) env('MIGRATION_ORDER_CONCURRENCY_PLUS', 6),
+            'enterprise' => (int) env('MIGRATION_ORDER_CONCURRENCY_ENTERPRISE', 8),
+        ],
     ],
 
     // What to wait, in seconds, after Shopify soft-rate-limits a mutation —
