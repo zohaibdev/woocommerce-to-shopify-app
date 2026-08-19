@@ -4,6 +4,13 @@
 > machine-readable snapshot of everything built so far — architecture, folder layout,
 > migrators, plans/limits, auth, known gotchas, live blockers and commands. It exists so a
 > new session doesn't have to re-explore the codebase.
+>
+> Human-readable companions, kept in step with it:
+> **[PROJECT_CONTEXT.md](PROJECT_CONTEXT.md)** (orientation + business rules),
+> **[ARCHITECTURE.md](ARCHITECTURE.md)** (full technical walk-through, migration deep dive),
+> **[COMMANDS.md](COMMANDS.md)** (every command, verified against this repo).
+> Changing behaviour means updating the JSON **and** the affected .md — a contradiction
+> between them is worse than either being stale.
 
 Read **[SPECIFICATION.md](SPECIFICATION.md)** before doing any work. It is the source of truth for architecture, schema, API contracts, and phases. This file is the short guardrail list.
 

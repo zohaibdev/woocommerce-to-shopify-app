@@ -657,7 +657,7 @@
     ]
   },
   "commands": {
-    "local_dev_all": "start-dev.bat (backend :8000, queue worker, vite :5173, cloudflared tunnel)",
+    "local_dev_all": "cd app/backend && composer dev  (runs serve + queue:listen + pail + vite concurrently). NOTE: the old start-dev.bat referenced here no longer exists.",
     "backend_serve": "cd app/backend && php artisan serve --host=127.0.0.1 --port=8000",
     "queue_worker": "cd app/backend && php artisan queue:work",
     "frontend_dev": "cd app/frontend && npm run dev",
