@@ -12,6 +12,7 @@ zipfile always writes forward slashes, which is what the format actually says.
 What goes in (matches DEPLOYMENT.md section 1):
 
     index.html  site.css  favicon.*  icons.svg     landing page
+    assets/                                        landing page screenshots/logo
     privacy/ terms/ refund/ contact/ developers/   public pages
     app/index.php  app/.htaccess                   front controller
     app/assets/*                                   built JS/CSS
@@ -49,6 +50,7 @@ FILES = [
 
 DIRS = [
     ("app/assets", True),
+    ("assets", True),
     ("privacy", False),
     ("terms", False),
     ("refund", False),

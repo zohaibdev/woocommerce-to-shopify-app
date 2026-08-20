@@ -17,6 +17,7 @@ App: `https://shiftshop.tech/app/`
 public_html/
 ├── index.html              ← landing page (domain root)
 ├── favicon.svg  icons.svg
+├── assets/images/          ← landing page screenshots + logo (used by index.html)
 │
 └── app/                    ← the whole application
     ├── index.php           ← Laravel front controller (paths point to ./backend/)
@@ -42,6 +43,7 @@ Unzip **`store-shift-deploy.zip`** into `public_html/`. It contains:
 
 ```
 index.html          favicon.svg   icons.svg
+assets/images/*
 app/index.php       app/.htaccess
 app/assets/*        app/favicon.svg  app/icons.svg
 app/backend-htaccess.txt   ← rename to backend/.htaccess (see §3)

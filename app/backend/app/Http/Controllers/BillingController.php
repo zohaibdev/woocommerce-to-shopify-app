@@ -27,16 +27,32 @@ class BillingController extends Controller
                 'limits' => $current->limits,
             ] : null,
             'subscription_status' => $shop->activeSubscription?->status,
-            'plans' => Plan::where('active', true)->orderBy('price')->get()
-                ->map(fn (Plan $p) => [
-                    'code' => $p->code,
-                    'name' => $p->name,
-                    'price' => (float) $p->price,
-                    'interval' => $p->interval,
-                    'limits' => $p->limits,
-                    'is_current' => $current && $p->id === $current->id,
-                ]),
+            'plans' => self::formatPlans($current),
         ]);
+    }
+
+    /**
+     * Same plan list, with no shop context. Powers the pricing table on the
+     * public marketing site (index.html), which has no Shopify session and
+     * previously hardcoded its own copy of the plan data — so an admin
+     * editing coupons/blogs/reviews limits in AdminPlans never reached it.
+     */
+    public function publicPlans(): JsonResponse
+    {
+        return response()->json(['plans' => self::formatPlans(null)]);
+    }
+
+    private static function formatPlans(?Plan $current)
+    {
+        return Plan::where('active', true)->orderBy('price')->get()
+            ->map(fn (Plan $p) => [
+                'code' => $p->code,
+                'name' => $p->name,
+                'price' => (float) $p->price,
+                'interval' => $p->interval,
+                'limits' => $p->limits,
+                'is_current' => $current && $p->id === $current->id,
+            ]);
     }
 
     /** Begin a plan change. Returns a Shopify confirmation URL for paid plans. */

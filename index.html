@@ -1,328 +1,513 @@
 <!doctype html>
 <html lang="en">
+
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Shift Shop — WooCommerce to Shopify Migration</title>
-<meta name="description" content="Migrate products, variants, images, collections, metafields, customers and orders from WooCommerce to Shopify — safely, in the background, without duplicates." />
-<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-<link rel="stylesheet" href="/site.css" />
-<script>
-  /*
-   * This is the public marketing page and must never be what a merchant sees
-   * inside the Shopify admin. Shopify always passes `host` (and `embedded=1`)
-   * when it loads an app, so if either is present we are being framed as the
-   * app — hand straight over to /app/ with the query intact.
-   *
-   * Without this guard, anything that points Shopify at the domain root instead
-   * of /app/ (a mis-set App URL, the post-billing return) renders the landing
-   * page inside the admin iframe.
-   */
-  (function () {
-    var q = new URLSearchParams(window.location.search);
-    if (q.has('host') || q.has('embedded') || q.has('billing')) {
-      window.location.replace('/app/' + window.location.search + window.location.hash);
-    }
-  })();
-</script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Shift Shop — WooCommerce to Shopify Migration</title>
+  <meta name="description"
+    content="Migrate products, variants, images, collections, customers, orders, coupons, blog posts and reviews from WooCommerce to Shopify — safely, in the background, without duplicates." />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/site.css" />
+  <script>
+    /*
+     * This is the public marketing page and must never be what a merchant sees
+     * inside the Shopify admin. Shopify always passes `host` (and `embedded=1`)
+     * when it loads an app, so if either is present we are being framed as the
+     * app — hand straight over to /app/ with the query intact.
+     *
+     * Without this guard, anything that points Shopify at the domain root instead
+     * of /app/ (a mis-set App URL, the post-billing return) renders the landing
+     * page inside the admin iframe.
+     */
+    (function () {
+      var q = new URLSearchParams(window.location.search);
+      if (q.has('host') || q.has('embedded') || q.has('billing')) {
+        window.location.replace('/app/' + window.location.search + window.location.hash);
+      }
+    })();
+  </script>
 </head>
+
 <body>
 
-<header class="nav">
-  <div class="nav-inner">
-    <a class="brand" href="/"><img class="logo" src="/logo.svg" alt="" width="34" height="34" /><span>Shift Shop</span></a>
-    <nav class="nav-links">
-      <a href="#features">Features</a>
-      <a href="#how">How it works</a>
-      <a href="#pricing">Pricing</a>
-      <a href="/developers/">Docs</a>
-      <a href="#faq">FAQ</a>
-      <a class="nav-cta" href="#install">Install app</a>
-    </nav>
-  </div>
-</header>
-
-<section class="hero" id="install">
-  <div class="hero-inner">
-    <span class="pill">WooCommerce → Shopify</span>
-    <h1>Move your store to Shopify.<br /><span class="grad">Without losing anything.</span></h1>
-    <p class="sub">
-      Shift Shop migrates products, variants, images, collections, metafields, customers and
-      orders from WooCommerce into Shopify — in the background, safely, and without duplicates.
-    </p>
-
-    <div class="install">
-      <input id="shop" type="text" placeholder="your-store.myshopify.com" aria-label="Your Shopify store domain" />
-      <button onclick="install('shop')">Install app</button>
-    </div>
-    <p class="hint">Free plan available. Enter your store domain to begin installation.</p>
-
-    <div class="stats">
-      <div><strong>6</strong><span>data types</span></div>
-      <div><strong>100%</strong><span>background jobs</span></div>
-      <div><strong>0</strong><span>duplicates on re-run</span></div>
-    </div>
-  </div>
-</section>
-
-<section class="section" id="features">
-  <h2>Everything that matters, migrated</h2>
-  <p class="section-sub">Not just names and prices — the details that break most migrations.</p>
-  <div class="grid">
-    <div class="card">
-      <div class="ico">📦</div><h3>Products &amp; variants</h3>
-      <p>Titles, descriptions, SKUs, prices, compare-at pricing, inventory, weight and shipping — including every variation.</p>
-    </div>
-    <div class="card">
-      <div class="ico">🗂️</div><h3>Categories → Collections</h3>
-      <p>WooCommerce categories become Shopify collections, with products linked automatically.</p>
-    </div>
-    <div class="card">
-      <div class="ico">🖼️</div><h3>Images &amp; media</h3>
-      <p>Product galleries and per-variant images, attached as the product is created.</p>
-    </div>
-    <div class="card">
-      <div class="ico">🏷️</div><h3>Metafields &amp; brands</h3>
-      <p>Custom <code>meta_data</code> becomes Shopify metafields, with definitions created so they show in your admin.</p>
-    </div>
-    <div class="card">
-      <div class="ico">👤</div><h3>Customers</h3>
-      <p>Profiles, phone numbers and addresses. Phone numbers are reformatted to the international format Shopify requires.</p>
-    </div>
-    <div class="card">
-      <div class="ico">🧾</div><h3>Historical orders</h3>
-      <p>Line items, totals, shipping, addresses and financial status — kept on their original dates.</p>
-    </div>
-  </div>
-</section>
-
-<section class="alt" id="how">
-  <div class="alt-inner">
-    <h2>How it works</h2>
-    <p class="section-sub">Four steps. Then close the tab — the migration keeps running.</p>
-    <div class="steps">
-      <div class="step">
-        <div class="step-n">1</div>
-        <div><h3>Install from the Shopify App Store</h3>
-        <p>Shift Shop runs inside your Shopify admin. Nothing to host, nothing to configure.</p></div>
-      </div>
-      <div class="step">
-        <div class="step-n">2</div>
-        <div><h3>Connect WooCommerce</h3>
-        <p>In WooCommerce go to <strong>Settings → Advanced → REST API</strong> and create a key with Read access. Paste the store URL, consumer key and secret, then test the connection.</p></div>
-      </div>
-      <div class="step">
-        <div class="step-n">3</div>
-        <div><h3>Choose what to migrate</h3>
-        <p>Pick products, categories, customers or orders. The wizard shows exactly how many records exist and how many your plan covers before you start.</p></div>
-      </div>
-      <div class="step">
-        <div class="step-n">4</div>
-        <div><h3>Start, then walk away</h3>
-        <p>Everything runs on a background queue with live progress. Close the browser, log out, come back tomorrow — the run is unaffected, and we can email you when it finishes.</p></div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section class="section">
-  <h2>Built for messy real-world stores</h2>
-  <p class="section-sub">Most migrations fail on the awkward parts. These are handled.</p>
-  <div class="grid">
-    <div class="card">
-      <div class="ico">🔁</div><h3>Safe to re-run</h3>
-      <p>Every record is mapped to its WooCommerce source. Running a migration twice updates your data instead of creating a second copy of it.</p>
-    </div>
-    <div class="card">
-      <div class="ico">🛡️</div><h3>One bad field never loses a record</h3>
-      <p>A deleted image, an oddly formatted phone number, a rejected tag — the offending field is skipped and the record still lands, with a note telling you what was left out.</p>
-    </div>
-    <div class="card">
-      <div class="ico">⏱️</div><h3>Rate limits respected</h3>
-      <p>Shopify throttling is handled with automatic backoff. Migrations pause and resume by themselves rather than failing.</p>
-    </div>
-    <div class="card">
-      <div class="ico">📋</div><h3>Every failure explained</h3>
-      <p>Failed records are listed with the exact reason from Shopify, and can be retried on their own — without re-running the whole migration.</p>
-    </div>
-    <div class="card">
-      <div class="ico">🔐</div><h3>Credentials encrypted</h3>
-      <p>Your WooCommerce keys and Shopify token are encrypted at rest and never shown back to you in full.</p>
-    </div>
-    <div class="card">
-      <div class="ico">🚫</div><h3>Your data is never shared</h3>
-      <p>We do not sell, rent or share your store data with anyone. We keep ID mappings, not your catalogue.</p>
-    </div>
-  </div>
-</section>
-
-<section class="alt" id="pricing">
-  <div class="alt-inner">
-    <h2>Simple, honest pricing</h2>
-    <p class="section-sub">Start free. Upgrade only when your catalogue needs it. Billed through Shopify, cancel any time.</p>
-
-    <div class="plans">
-      <div class="plan">
-        <h3>Starter</h3>
-        <div class="price">Free</div>
-        <ul>
-          <li>10 products</li>
-          <li>10 customers</li>
-          <li>Collections, variants &amp; images</li>
-          <li class="no">Orders not included</li>
-          <li class="no">Metafields &amp; brands</li>
-          <li class="no">Coupons, blogs &amp; reviews</li>
-        </ul>
-        <a class="btn btn-ghost" href="#install">Start free</a>
-      </div>
-
-      <div class="plan featured">
-        <span class="tag">MOST POPULAR</span>
-        <h3>Basic</h3>
-        <div class="price">$19 <span>/month</span></div>
-        <ul>
-          <li>2,000 products</li>
-          <li>2,000 customers</li>
-          <li>2,000 orders</li>
-          <li>Collections, variants &amp; images</li>
-          <li>Metafields &amp; brands</li>
-          <li>Coupons, blogs &amp; reviews</li>
-        </ul>
-        <a class="btn" href="#install">Get started</a>
-      </div>
-
-      <div class="plan">
-        <h3>Proc</h3>
-        <div class="price">$149 <span>/month</span></div>
-        <ul>
-          <li>15,000 products</li>
-          <li>10,000 customers</li>
-          <li>10,000 orders</li>
-          <li>Collections, variants &amp; images</li>
-          <li>Metafields &amp; brands</li>
-          <li>Coupons, blogs &amp; reviews</li>
-        </ul>
-        <a class="btn btn-ghost" href="#install">Get started</a>
-      </div>
-
-      <div class="plan">
-        <h3>Enterprise</h3>
-        <div class="price" style="font-size:25px">Request a quote</div>
-        <ul>
-          <li>Unlimited products</li>
-          <li>Unlimited customers</li>
-          <li>Unlimited orders</li>
-          <li>Collections, variants &amp; images</li>
-          <li>Metafields &amp; brands</li>
-          <li>Coupons, blogs &amp; reviews</li>
-        </ul>
-        <a class="btn btn-ghost" href="#install">Get started</a>
-      </div>
-    </div>
-
-    <p class="pricing-note">
-      All plans are billed monthly through Shopify and appear on your Shopify invoice.
-      Please read our <a href="/refund/">refund policy</a> before subscribing — the free plan is there
-      so you can confirm the app works with your store first.
-    </p>
-  </div>
-</section>
-
-<section class="section" id="faq">
-  <h2>Frequently asked questions</h2>
-  <p class="section-sub">Still unsure? <a href="/contact/">Get in touch</a>.</p>
-  <div class="faq">
-    <details>
-      <summary>Does it create duplicates if I run it twice?</summary>
-      <p>No. Every migrated record is mapped to the WooCommerce record it came from. A second run updates the existing Shopify record instead of creating another one — and repairs anything you deleted in Shopify by mistake.</p>
-    </details>
-    <details>
-      <summary>Can I close the browser while it runs?</summary>
-      <p>Yes. Migrations run on a background queue on our servers, not in your browser. Closing the tab, logging out or losing your connection has no effect on the run.</p>
-    </details>
-    <details>
-      <summary>Are customer passwords migrated?</summary>
-      <p>No — that is technically impossible. WooCommerce and Shopify store password hashes in incompatible formats. Your customers will need to set a password on their first Shopify login.</p>
-    </details>
-    <details>
-      <summary>What happens to records that fail?</summary>
-      <p>The migration keeps going. Failed records are listed with the exact reason Shopify gave, and you can retry just those records without re-running everything.</p>
-    </details>
-    <details>
-      <summary>What does my WooCommerce store need?</summary>
-      <p>WordPress 5.6+ with WooCommerce 5.0+, and REST API credentials with Read access. The API has to be reachable from the internet over HTTPS — stores behind a firewall, password protection or an IP allowlist cannot be read.</p>
-    </details>
-    <details>
-      <summary>Do you keep a copy of my store data?</summary>
-      <p>No. We store the mapping between your WooCommerce IDs and the Shopify IDs we created, plus progress and error logs. We do not keep your product catalogue or customer records, and we never share anything with third parties. See the <a href="/privacy/">privacy policy</a>.</p>
-    </details>
-  </div>
-</section>
-
-<section class="cta">
-  <h2>Ready to move?</h2>
-  <p>Install Shift Shop and migrate your first products in minutes — free.</p>
-  <div class="install" style="justify-content:center">
-    <input id="shop2" type="text" placeholder="your-store.myshopify.com" aria-label="Your Shopify store domain" />
-    <button onclick="install('shop2')">Install app</button>
-  </div>
-</section>
-
-<footer class="footer">
-  <div class="footer-inner">
-    <div class="footer-cols">
-      <div>
-        <a class="brand" href="/" style="margin-bottom:14px"><img class="logo" src="/logo.svg" alt="" width="34" height="34" /><span>Shift Shop</span></a>
-        <p>WooCommerce → Shopify migration that runs in the background and never duplicates your data.</p>
-      </div>
-      <div>
-        <h4>Product</h4>
+  <header class="nav">
+    <div class="nav-inner">
+      <a class="brand" href="/"><img class="logo" src="/logo.svg" alt="" width="34" height="34" /><span>Shift
+          Shop</span></a>
+      <nav class="nav-links">
         <a href="#features">Features</a>
         <a href="#how">How it works</a>
         <a href="#pricing">Pricing</a>
+        <a href="/developers/">Docs</a>
         <a href="#faq">FAQ</a>
+        <a class="nav-cta" href="#install">Install app</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="hero hero-split" id="install">
+    <div class="hero-inner">
+      <div class="hero-copy">
+        <h1>Move your store to Shopify.<br /><span class="grad">Without losing anything.</span></h1>
+        <p class="sub">
+          Shift Shop migrates products, variants, images, collections, customers, orders, coupons,
+          blog posts and reviews from WooCommerce into Shopify — in the background, safely, and
+          without duplicates.
+        </p>
+
+        <div class="install">
+          <input id="shop" type="text" placeholder="your-store.myshopify.com" aria-label="Your Shopify store domain" />
+          <button onclick="install('shop')">Install app</button>
+        </div>
+        <p class="hint">
+          Free plan available. Enter your store domain to begin installation, or
+          <a href="#how" style="color:#fff;text-decoration:underline">see how it works</a> first.
+        </p>
       </div>
-      <div>
-        <h4>Resources</h4>
-        <a href="/developers/">Documentation</a>
-        <a href="/contact/">Contact</a>
-      </div>
-      <div>
-        <h4>Legal</h4>
-        <a href="/privacy/">Privacy policy</a>
-        <a href="/terms/">Terms of service</a>
-        <a href="/refund/">Refund policy</a>
+
+      <div class="hero-media">
+        <img src="/assets/images/Dashboard.png" width="1600" height="900"
+          alt="The Shift Shop dashboard showing product, category, order and customer counts with a migration in progress" />
       </div>
     </div>
-    <div class="footer-bottom">
-      <div>© <span id="year"></span> Webnday Pvt. Ltd — Shift Shop. All rights reserved.</div>
-      <div>Not affiliated with Shopify Inc. or Automattic Inc.</div>
+  </section>
+
+  <section class="split media-left" id="features">
+    <div class="split-media">
+      <img src="/assets/images/Woocommerce-Config.png" width="1600" height="900" loading="lazy"
+        alt="The Connect WooCommerce screen with a store URL, consumer key and secret, and a successful connection banner" />
+    </div>
+    <div class="split-content">
+      <span class="split-eyebrow">Getting started</span>
+      <h2>Connect WooCommerce in under a minute</h2>
+      <p class="split-lead">
+        Paste your store URL and a read-only REST API key from
+        <strong>WooCommerce → Settings → Advanced → REST API</strong>. Shift Shop tests the
+        connection before saving anything — if it fails, your existing setup is left untouched.
+      </p>
+    </div>
+  </section>
+
+  <section class="alt">
+
+    <div class="split">
+      <div class="split-content">
+        <span class="split-eyebrow">Full control</span>
+        <h2>Choose exactly what migrates</h2>
+        <p class="split-lead">
+          Pick products, categories, customers, orders, coupons, blogs or reviews individually — the
+          wizard shows how many records exist and how many your plan covers before you start. Set your
+          weight unit, image size and custom tags too, so the data lands the way your store expects.
+        </p>
+      </div>
+      <div class="split-media">
+        <img src="/assets/images/Migration-New.png" width="1600" height="900" loading="lazy"
+          alt="The New migration wizard with checkboxes for products, categories, orders, coupons, blogs and reviews, plus weight unit and image size settings" />
+      </div>
+    </div>
+  </section>
+
+  <section class="split media-left">
+    <div class="split-media">
+      <img src="/assets/images/Migration-Complete.png" width="1600" height="900" loading="lazy"
+        alt="A completed migration showing product, customer and order progress bars, with an activity log explaining exactly what happened to each record" />
+    </div>
+    <div class="split-content">
+      <span class="split-eyebrow">Products, variants &amp; images</span>
+      <h2>Your catalogue, not a stripped-down copy</h2>
+      <p class="split-lead">
+        Titles, descriptions, SKUs, prices, compare-at pricing, inventory and weight move across
+        intact. Variable products bring their variations and options with them, and product and
+        variant images are attached as each product is created — no separate media import step.
+      </p>
+    </div>
+  </section>
+
+  <section class="alt">
+
+    <div class="split">
+      <div class="split-content">
+        <span class="split-eyebrow">Customers &amp; orders</span>
+        <h2>Your sales history stays intact</h2>
+        <p class="split-lead">
+          Customer profiles, addresses and phone numbers carry over — phone numbers reformatted to
+          what Shopify requires. Historical orders transfer with their line items, totals, shipping
+          and financial status kept on their original dates, so nothing in your history goes missing.
+        </p>
+      </div>
+      <div class="split-media">
+        <img src="/assets/images/Migration-List.png" width="1600" height="900" loading="lazy"
+          alt="A list of past migrations, one including product, category, order, customer and review data, another with product and customer only" />
+      </div>
+    </div>
+  </section>
+
+
+  <div class="split media-left">
+    <div class="split-media">
+      <img src="/assets/images/Pricing.png" width="1600" height="900" loading="lazy"
+        alt="The Plans and pricing page showing coupon, blog and product review support included on paid plans" />
+    </div>
+    <div class="split-content">
+      <span class="split-eyebrow">Beyond the catalogue</span>
+      <h2>Reviews, blogs and coupons aren't an afterthought</h2>
+      <p class="split-lead">
+        Product reviews move across as rating, author, date and content — ready to show once you
+        add a reviews app, since Shopify's Admin API has no native reviews field. WordPress blog
+        posts keep their original publish date and images. And supported WooCommerce coupon types
+        become Shopify discount codes automatically.
+      </p>
     </div>
   </div>
-</footer>
+  <section class="alt">
 
-<script>
-  document.getElementById('year').textContent = new Date().getFullYear();
+    <div class="split split-support">
+      <div class="split-content">
+        <span class="split-eyebrow">Support</span>
+        <h2>Help, without leaving the app</h2>
+        <p class="split-lead">
+          Open a ticket from inside Shift Shop and include a migration number — we can see exactly
+          what happened on our end, not just what you can describe.
+        </p>
+      </div>
+      <div class="split-media">
+        <img src="/assets/images/Support.png" width="1600" height="900" loading="lazy"
+          alt="The in-app Support page with a submitted ticket confirmation and a form to describe a migration issue" />
+      </div>
+    </div>
+  </section>
 
-  function install(inputId) {
-    var el = document.getElementById(inputId);
-    var shop = (el.value || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  <section class="section" id="features">
+    <h2>Everything that matters, migrated</h2>
+    <p class="section-sub">Not just names and prices — the details that break most migrations.</p>
+    <div class="grid">
+      <div class="card">
+        <div class="ico">📦</div>
+        <h3>Products &amp; variants</h3>
+        <p>Titles, descriptions, SKUs, prices, compare-at pricing, inventory, weight and shipping — including every
+          variation.</p>
+      </div>
+      <div class="card">
+        <div class="ico">🗂️</div>
+        <h3>Categories → Collections</h3>
+        <p>WooCommerce categories become Shopify collections, with products linked automatically.</p>
+      </div>
+      <div class="card">
+        <div class="ico">🖼️</div>
+        <h3>Images &amp; media</h3>
+        <p>Product galleries and per-variant images, attached as the product is created.</p>
+      </div>
+      <div class="card">
+        <div class="ico">🏷️</div>
+        <h3>Metafields &amp; brands</h3>
+        <p>Custom <code>meta_data</code> becomes Shopify metafields, with definitions created so they show in your
+          admin.</p>
+      </div>
+      <div class="card">
+        <div class="ico">👤</div>
+        <h3>Customers</h3>
+        <p>Profiles, phone numbers and addresses. Phone numbers are reformatted to the international format Shopify
+          requires.</p>
+      </div>
+      <div class="card">
+        <div class="ico">🧾</div>
+        <h3>Historical orders</h3>
+        <p>Line items, totals, shipping, addresses and financial status — kept on their original dates.</p>
+      </div>
+    </div>
+  </section>
+  <section class="alt" id="how">
+    <div class="alt-inner">
+      <h2>How it works</h2>
+      <p class="section-sub">Four steps. Then close the tab — the migration keeps running.</p>
+      <div class="steps">
+        <div class="step">
+          <div class="step-n">1</div>
+          <div>
+            <h3>Install from the Shopify App Store</h3>
+            <p>Shift Shop runs inside your Shopify admin. Nothing to host, nothing to configure.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-n">2</div>
+          <div>
+            <h3>Connect WooCommerce</h3>
+            <p>In WooCommerce go to <strong>Settings → Advanced → REST API</strong> and create a key with Read access.
+              Paste the store URL, consumer key and secret, then test the connection.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-n">3</div>
+          <div>
+            <h3>Choose what to migrate</h3>
+            <p>Pick products, categories, customers, orders, coupons, blogs or reviews individually. The wizard shows
+              exactly how many records exist and how many your plan covers before you start.</p>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-n">4</div>
+          <div>
+            <h3>Start, then walk away</h3>
+            <p>Everything runs on a background queue with live progress. Close the browser, log out, come back tomorrow
+              — the run is unaffected, and we can email you when it finishes.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
 
-    if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shop)) {
-      alert('Enter your store domain, e.g. your-store.myshopify.com');
-      el.focus();
-      return;
+  <section class="section">
+    <h2>Built for messy real-world stores</h2>
+    <p class="section-sub">Most migrations fail on the awkward parts. These are handled.</p>
+    <div class="grid">
+      <div class="card">
+        <div class="ico">🔁</div>
+        <h3>Safe to re-run</h3>
+        <p>Every record is mapped to its WooCommerce source. Running a migration twice updates your data instead of
+          creating a second copy of it.</p>
+      </div>
+      <div class="card">
+        <div class="ico">🛡️</div>
+        <h3>One bad field never loses a record</h3>
+        <p>A deleted image, an oddly formatted phone number, a rejected tag — the offending field is skipped and the
+          record still lands, with a note telling you what was left out.</p>
+      </div>
+      <div class="card">
+        <div class="ico">⏱️</div>
+        <h3>Rate limits respected</h3>
+        <p>Shopify throttling is handled with automatic backoff. Migrations pause and resume by themselves rather than
+          failing.</p>
+      </div>
+      <div class="card">
+        <div class="ico">📋</div>
+        <h3>Every failure explained</h3>
+        <p>Failed records are listed with the exact reason from Shopify, and can be retried on their own — without
+          re-running the whole migration.</p>
+      </div>
+      <div class="card">
+        <div class="ico">🔐</div>
+        <h3>Credentials encrypted</h3>
+        <p>Your WooCommerce keys and Shopify token are encrypted at rest and never shown back to you in full.</p>
+      </div>
+      <div class="card">
+        <div class="ico">🚫</div>
+        <h3>Your data is never shared</h3>
+        <p>We do not sell, rent or share your store data with anyone. We keep ID mappings, not your catalogue.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="alt" id="pricing">
+    <div class="alt-inner">
+      <h2>Simple, honest pricing</h2>
+      <p class="section-sub">Start free. Upgrade only when your catalogue needs it. Billed through Shopify, cancel any
+        time.</p>
+
+      <div class="plans" id="plans">
+        <div class="plan">
+          <p style="color:var(--muted)">Loading plans…</p>
+        </div>
+      </div>
+
+      <p class="pricing-note">
+        All plans are billed monthly through Shopify and appear on your Shopify invoice.
+        Please read our <a href="/refund/">refund policy</a> before subscribing — the free plan is there
+        so you can confirm the app works with your store first.
+      </p>
+    </div>
+  </section>
+
+  <section class="section" id="faq">
+    <h2>Frequently asked questions</h2>
+    <p class="section-sub">Still unsure? <a href="/contact/">Get in touch</a>.</p>
+    <div class="faq">
+      <details>
+        <summary>Does it create duplicates if I run it twice?</summary>
+        <p>No. Every migrated record is mapped to the WooCommerce record it came from. A second run updates the existing
+          Shopify record instead of creating another one — and repairs anything you deleted in Shopify by mistake.</p>
+      </details>
+      <details>
+        <summary>Can I close the browser while it runs?</summary>
+        <p>Yes. Migrations run on a background queue on our servers, not in your browser. Closing the tab, logging out
+          or losing your connection has no effect on the run.</p>
+      </details>
+      <details>
+        <summary>Are customer passwords migrated?</summary>
+        <p>No — that is technically impossible. WooCommerce and Shopify store password hashes in incompatible formats.
+          Your customers will need to set a password on their first Shopify login.</p>
+      </details>
+      <details>
+        <summary>What happens to records that fail?</summary>
+        <p>The migration keeps going. Failed records are listed with the exact reason Shopify gave, and you can retry
+          just those records without re-running everything.</p>
+      </details>
+      <details>
+        <summary>What does my WooCommerce store need?</summary>
+        <p>WordPress 5.6+ with WooCommerce 5.0+, and REST API credentials with Read access. The API has to be reachable
+          from the internet over HTTPS — stores behind a firewall, password protection or an IP allowlist cannot be
+          read.</p>
+      </details>
+      <details>
+        <summary>Are product reviews migrated?</summary>
+        <p>Yes — each product's reviews (rating, author, date, verified status and content) are saved as data on the
+          product. Shopify's Admin API has no native reviews field, so you'll need a reviews app or theme block to
+          display them, but the data is preserved rather than lost.</p>
+      </details>
+      <details>
+        <summary>What happens to my coupons and discount rules?</summary>
+        <p>Percentage and fixed-amount coupons become Shopify discount codes automatically. A few WooCommerce-only
+          restrictions — like limiting a coupon to specific customers or excluding certain products — aren't supported
+          by Shopify's discount API. Those are named in a warning on the record so you know exactly what to recreate by
+          hand.</p>
+      </details>
+      <details>
+        <summary>Do you keep a copy of my store data?</summary>
+        <p>No. We store the mapping between your WooCommerce IDs and the Shopify IDs we created, plus progress and error
+          logs. We do not keep your product catalogue or customer records, and we never share anything with third
+          parties. See the <a href="/privacy/">privacy policy</a>.</p>
+      </details>
+    </div>
+  </section>
+
+  <section class="cta">
+    <h2>Ready to move?</h2>
+    <p>Install Shift Shop and migrate your first products in minutes — free.</p>
+    <div class="install" style="justify-content:center">
+      <input id="shop2" type="text" placeholder="your-store.myshopify.com" aria-label="Your Shopify store domain" />
+      <button onclick="install('shop2')">Install app</button>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="footer-inner">
+      <div class="footer-cols">
+        <div>
+          <a class="brand" href="/" style="margin-bottom:14px"><img class="logo" src="/logo.svg" alt="" width="34"
+              height="34" /><span>Shift Shop</span></a>
+          <p>WooCommerce → Shopify migration that runs in the background and never duplicates your data.</p>
+        </div>
+        <div>
+          <h4>Product</h4>
+          <a href="#features">Features</a>
+          <a href="#how">How it works</a>
+          <a href="#pricing">Pricing</a>
+          <a href="#faq">FAQ</a>
+        </div>
+        <div>
+          <h4>Resources</h4>
+          <a href="/developers/">Documentation</a>
+          <a href="/contact/">Contact</a>
+        </div>
+        <div>
+          <h4>Legal</h4>
+          <a href="/privacy/">Privacy policy</a>
+          <a href="/terms/">Terms of service</a>
+          <a href="/refund/">Refund policy</a>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <div>© <span id="year"></span> Webnday Pvt. Ltd — Shift Shop. All rights reserved.</div>
+        <div>Not affiliated with Shopify Inc. or Automattic Inc.</div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    document.getElementById('year').textContent = new Date().getFullYear();
+
+    function install(inputId) {
+      var el = document.getElementById(inputId);
+      var shop = (el.value || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+
+      if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shop)) {
+        alert('Enter your store domain, e.g. your-store.myshopify.com');
+        el.focus();
+        return;
+      }
+
+      window.location.href = '/app/api/auth?shop=' + encodeURIComponent(shop);
     }
 
-    window.location.href = '/app/api/auth?shop=' + encodeURIComponent(shop);
-  }
+    // Enter key submits either install box.
+    ['shop', 'shop2'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener('keydown', function (e) { if (e.key === 'Enter') install(id); });
+    });
 
-  // Enter key submits either install box.
-  ['shop', 'shop2'].forEach(function (id) {
-    var el = document.getElementById(id);
-    if (el) el.addEventListener('keydown', function (e) { if (e.key === 'Enter') install(id); });
-  });
-</script>
+    // Pricing table — rendered from the live /api/plans feed instead of being
+    // hardcoded here, so a plan's price and content-feature limits (coupons,
+    // blogs, reviews) always match what an admin configured in AdminPlans.
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+
+    function cap(v) {
+      return v === null || v === undefined ? 'Unlimited' : Number(v).toLocaleString();
+    }
+
+    function feature(ok, label) {
+      return '<li' + (ok ? '' : ' class="no"') + '>' + esc(label) + '</li>';
+    }
+
+    function planCard(p) {
+      var limits = p.limits || {};
+      var featured = p.code === 'basic';
+      var rows = '';
+
+      if (limits.total !== null && limits.total !== undefined) {
+        rows += feature(true, cap(limits.total) + ' records total');
+        rows += feature(true, 'Products, customers & orders — your mix');
+      } else {
+        rows += feature(true, cap(limits.products) + ' products');
+        rows += feature(true, cap(limits.customers) + ' customers');
+        rows += limits.orders === 0
+          ? feature(false, 'Orders not included')
+          : feature(true, cap(limits.orders) + ' orders');
+      }
+
+      rows += feature(true, 'Collections, variants & images');
+      rows += feature(limits.metafields !== false, 'Metafields & brands');
+      rows += feature(limits.coupons !== 0, 'Coupons → discount codes');
+      rows += feature(limits.blogs !== 0, 'Blogs & blog posts');
+      rows += feature(limits.reviews !== 0, 'Product reviews');
+
+      var priceHtml = limits.contact_only
+        ? '<div class="price" style="font-size:25px">Request a quote</div>'
+        : p.price === 0
+          ? '<div class="price">Free</div>'
+          : '<div class="price">$' + Math.round(p.price) + ' <span>/month</span></div>';
+
+      var ctaHtml = limits.contact_only
+        ? '<a class="btn btn-ghost" href="/contact/">Contact us</a>'
+        : '<a class="btn' + (featured ? '' : ' btn-ghost') + '" href="#install">'
+        + (p.price === 0 ? 'Start free' : 'Get started') + '</a>';
+
+      return '<div class="plan' + (featured ? ' featured' : '') + '">'
+        + (featured ? '<span class="tag">MOST POPULAR</span>' : '')
+        + '<h3>' + esc(p.name) + '</h3>'
+        + priceHtml
+        + '<ul>' + rows + '</ul>'
+        + ctaHtml
+        + '</div>';
+    }
+
+    fetch('/app/api/plans')
+      .then(function (res) { if (!res.ok) throw new Error('bad response'); return res.json(); })
+      .then(function (data) {
+        var plans = data.plans || [];
+        var el = document.getElementById('plans');
+        if (!plans.length) { el.innerHTML = '<div class="plan"><p style="color:var(--muted)">Pricing is being updated — please check back shortly.</p></div>'; return; }
+        el.innerHTML = plans.map(planCard).join('');
+      })
+      .catch(function () {
+        document.getElementById('plans').innerHTML =
+          '<div class="plan"><p style="color:var(--muted)">Could not load pricing right now — please refresh, or see <a href="/contact/">contact us</a>.</p></div>';
+      });
+  </script>
 
 </body>
+
 </html>

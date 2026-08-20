@@ -31,6 +31,9 @@ Route::get('/branding/logo', [BrandingController::class, 'logo']);
 // --- Public contact form on the marketing site (rate limited: it has no auth) ---
 Route::post('/contact', [ContactController::class, 'send'])->middleware('throttle:5,60');
 
+// --- Public plan list for the marketing site's pricing table (no shop context) ---
+Route::get('/plans', [BillingController::class, 'publicPlans']);
+
 // --- Shopify webhooks (HMAC-verified inside the controller) ---
 Route::post('/webhooks/app-uninstalled', [WebhookController::class, 'appUninstalled']);
 Route::post('/webhooks/customers-data-request', [WebhookController::class, 'customersDataRequest']);
