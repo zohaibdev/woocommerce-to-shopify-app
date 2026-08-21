@@ -3,12 +3,12 @@
   "schema_version": "1.0",
   "last_updated": "2026-08-19",
   "project": {
-    "name": "Shift Shop",
+    "name": "Shop Shift",
     "what_it_is": "Embedded Shopify app that migrates a merchant's WooCommerce store data into their Shopify store.",
-    "production_url": "https://shiftshop.tech",
-    "app_url": "https://shiftshop.tech/app",
-    "admin_url": "https://shiftshop.tech/app/admin",
-    "landing_page": "https://shiftshop.tech/ (static index.html, not React)",
+    "production_url": "https://shopshift.net",
+    "app_url": "https://shopshift.net/app",
+    "admin_url": "https://shopshift.net/app/admin",
+    "landing_page": "https://shopshift.net/ (static index.html, not React)",
     "status": "Deployed to production. Not yet published on the Shopify App Store (unlisted).",
     "local_path": "C:/Users/Zohaib/Documents/Edits/store-shift",
     "git_remote": "https://github.com/zohaibdev/store-shift.git"
@@ -622,7 +622,7 @@
     {
       "item": "Privacy policy page",
       "status": "DONE — /privacy/ (also /terms/, /refund/, /contact/, /developers/)",
-      "impact": "Legal entity on all public pages is 'Webnday Pvt. Ltd', with Shift Shop as its product. No registered address or named jurisdiction is published — governing law refers to the jurisdiction in which Webnday Pvt. Ltd is registered."
+      "impact": "Legal entity on all public pages is 'Webnday Pvt. Ltd', with Shop Shift as its product. No registered address or named jurisdiction is published — governing law refers to the jurisdiction in which Webnday Pvt. Ltd is registered."
     },
     {
       "item": "support@webnday.com mailbox",

@@ -146,7 +146,7 @@ function App() {
         </span>
         <span style={{ display: "block", marginTop: 4 }}>
           <Text as="span" variant="bodySm" tone="subdued">
-            Shift Shop — WooCommerce → Shopify migration
+            Shop Shift — WooCommerce → Shopify migration
           </Text>
         </span>
       </FooterHelp>

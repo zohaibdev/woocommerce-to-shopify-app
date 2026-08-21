@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Shift Shop — WooCommerce → Shopify migration app
+# Shop Shift — WooCommerce → Shopify migration app
 # Root ignore file. backend/ (Laravel) and frontend/ (Vite) also have their own;
 # patterns here apply recursively and act as a backstop for both.
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-# PROJECT_CONTEXT.md — Shift Shop
+# PROJECT_CONTEXT.md — Shop Shift
 
 > **Scope of this file.** High-level orientation: what the product is, how it is put
 > together, and the rules a developer has to know before touching anything. For the
@@ -18,23 +18,25 @@
 
 ## Project Overview
 
-Shift Shop is an **embedded Shopify app** that migrates a merchant's **WooCommerce**
+Shop Shift is an **embedded Shopify app** that migrates a merchant's **WooCommerce**
 store into their **Shopify** store.
 
 | | |
 |---|---|
-| Production URL | `https://shiftshop.tech` |
-| Merchant app | `https://shiftshop.tech/app` (embedded in the Shopify admin) |
-| Super-admin panel | `https://shiftshop.tech/app/admin` (own auth, not Shopify) |
-| Marketing / legal site | `https://shiftshop.tech/` (static HTML, not React) |
+| Production URL | `https://shopshift.net` |
+| Merchant app | `https://shopshift.net/app` (embedded in the Shopify admin) |
+| Super-admin panel | `https://shopshift.net/app/admin` (own auth, not Shopify) |
+| Marketing / legal site | `https://shopshift.net/` (static HTML, not React) |
 | Repository | `https://github.com/zohaibdev/store-shift` |
 | Status | Deployed; **not** published on the Shopify App Store |
 
-> **Naming.** The product is **Shift Shop**. The repository folder, the git remote and
-> the supervisor config file are all still named `store-shift`. Those are *paths and
-> identifiers* — do not rename them; renaming breaks deployment.
+> **Naming.** The product is **Shop Shift** (renamed from "Store Shift", itself
+> renamed from the original "Shift Shop").
+> The repository folder, the git remote and the supervisor config file are named
+> `store-shift`. Those are *paths and identifiers* — do not rename them; renaming
+> breaks deployment.
 
-## What Shift Shop Does
+## What Shop Shift Does
 
 Reads a merchant's WooCommerce store over the REST API and writes it into Shopify over
 the Admin GraphQL API. Migrated entities (verified against `MigratorRegistry`):

@@ -1,7 +1,7 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "1462f5d83148f24e32ddf349001f529a"
-name = "Shift Shop"
+name = "Shop Shift"
 # The app's ROOT, not its OAuth endpoint.
 #
 # This used to be ".../app/api/auth", which is where the legacy install flow
@@ -12,7 +12,7 @@ name = "Shift Shop"
 # matched no prefix, so Shopify's own router computed `undefined` and threw
 # "Cannot read properties of undefined (reading 'trim')" from inside the admin
 # bundle. First load worked; every nav click after it crashed the page.
-application_url = "https://shiftshop.tech/app"
+application_url = "https://shopshift.net/app"
 embedded = true
 
 [webhooks]
@@ -25,9 +25,9 @@ api_version = "2025-10"
   # Handled by App\Http\Controllers\WebhookController, which HMAC-verifies every
   # request. The paths must stay in step with routes/api.php.
   [webhooks.privacy_compliance]
-  customer_data_request_url = "https://shiftshop.tech/app/api/webhooks/customers-data-request"
-  customer_deletion_url = "https://shiftshop.tech/app/api/webhooks/customers-redact"
-  shop_deletion_url = "https://shiftshop.tech/app/api/webhooks/shop-redact"
+  customer_data_request_url = "https://shopshift.net/app/api/webhooks/customers-data-request"
+  customer_deletion_url = "https://shopshift.net/app/api/webhooks/customers-redact"
+  shop_deletion_url = "https://shopshift.net/app/api/webhooks/shop-redact"
 
   # DO NOT add app/uninstalled here.
   #
@@ -45,4 +45,4 @@ optional_scopes = [ ]
 use_legacy_install_flow = false
 
 [auth]
-redirect_urls = [ "https://shiftshop.tech/app/api/auth/callback" ]
+redirect_urls = [ "https://shopshift.net/app/api/auth/callback" ]

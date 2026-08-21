@@ -44,7 +44,7 @@ async function authHeader(): Promise<Record<string, string>> {
     throw new ApiError(
       401,
       "Shopify App Bridge did not load, so this page cannot authenticate. Open the app from your Shopify " +
-        "admin (Apps → Shift Shop) rather than from a bookmark, and check that no browser extension is " +
+        "admin (Apps → Shop Shift) rather than from a bookmark, and check that no browser extension is " +
         "blocking cdn.shopify.com.",
     );
   }

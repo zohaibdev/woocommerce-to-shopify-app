@@ -368,7 +368,7 @@ export const adminApi = {
     const url = URL.createObjectURL(await res.blob());
     const a = document.createElement("a");
     a.href = url;
-    a.download = `store-shift-debug-migration-${id}.txt`;
+    a.download = `shop-shift-debug-migration-${id}.txt`;
     document.body.appendChild(a);
     a.click();
     a.remove();

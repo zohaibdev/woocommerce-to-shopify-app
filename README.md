@@ -1,4 +1,4 @@
-# Shift Shop — WooCommerce → Shopify Migration App
+# Shop Shift — WooCommerce → Shopify Migration App
 
 An embedded Shopify app that migrates a merchant's WooCommerce store data into Shopify:
 **Products, Categories→Collections, Attributes→Options, Variations→Variants, Images/Media, Customers.**

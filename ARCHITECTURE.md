@@ -1,4 +1,4 @@
-# ARCHITECTURE.md — Shift Shop
+# ARCHITECTURE.md — Shop Shift
 
 Complete technical architecture. Written for a developer who has never seen this
 codebase and has to safely change it.

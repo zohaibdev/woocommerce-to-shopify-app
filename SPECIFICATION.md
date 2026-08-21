@@ -1,4 +1,4 @@
-# Shift Shop — WooCommerce → Shopify Migration App — Master Specification
+# Shop Shift — WooCommerce → Shopify Migration App — Master Specification
 
 > **Status:** v1.0 — Architecture-first master spec.
 > **Purpose:** Single source of truth for building a production-grade WooCommerce → Shopify data migration app, delivered to Shopify's App Store as an embedded app.

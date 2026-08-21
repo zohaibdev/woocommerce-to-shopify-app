@@ -274,7 +274,7 @@ export default function AdminStoreDetail() {
             <BlockStack gap="400">
               <Text as="p">
                 This affects <b>{resetting.total.toLocaleString()}</b> {resetting.type} record
-                {resetting.total === 1 ? "" : "s"} for this store. It changes what Shift Shop
+                {resetting.total === 1 ? "" : "s"} for this store. It changes what Shop Shift
                 remembers — it does not delete anything from the merchant&rsquo;s Shopify store.
               </Text>
 

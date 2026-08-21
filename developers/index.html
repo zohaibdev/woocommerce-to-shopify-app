@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Documentation — Shift Shop</title>
-<meta name="description" content="Complete documentation for Shift Shop: how migrations work, what maps to what, plan limits, error handling, the API, and troubleshooting." />
+<title>Documentation — Shop Shift</title>
+<meta name="description" content="Complete documentation for Shop Shift: how migrations work, what maps to what, plan limits, error handling, the API, and troubleshooting." />
 <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 <link rel="stylesheet" href="/site.css" />
 </head>
@@ -12,7 +12,7 @@
 
 <header class="nav">
   <div class="nav-inner">
-    <a class="brand" href="/"><img class="logo" src="/logo.svg" alt="" width="34" height="34" /><span>Shift Shop</span></a>
+    <a class="brand" href="/"><img class="logo" src="/logo.svg" alt="" width="34" height="34" /><span>Shop Shift</span></a>
     <nav class="nav-links">
       <a href="/#features">Features</a>
       <a href="/#pricing">Pricing</a>
@@ -24,7 +24,7 @@
 <div class="page-head">
   <div class="wrap">
     <h1>Documentation</h1>
-    <p class="meta">Everything Shift Shop does, how it does it, and what to do when it doesn't.</p>
+    <p class="meta">Everything Shop Shift does, how it does it, and what to do when it doesn't.</p>
   </div>
 </div>
 
@@ -54,7 +54,7 @@
 
   <h2 id="overview">1. Overview</h2>
   <p>
-    Shift Shop is an embedded Shopify app that copies data from a WooCommerce store into a Shopify
+    Shop Shift is an embedded Shopify app that copies data from a WooCommerce store into a Shopify
     store. It reads WooCommerce through its REST API v3 and writes to Shopify through the Admin
     GraphQL API.
   </p>
@@ -87,15 +87,15 @@
   <h3>Step 1 — Create WooCommerce API keys</h3>
   <p>In WordPress admin go to <strong>WooCommerce → Settings → Advanced → REST API → Add key</strong>:</p>
   <ul>
-    <li><strong>Description</strong> — anything, e.g. "Shift Shop"</li>
+    <li><strong>Description</strong> — anything, e.g. "Shop Shift"</li>
     <li><strong>User</strong> — an administrator account</li>
-    <li><strong>Permissions</strong> — <code>Read</code> is enough; Shift Shop never writes to WooCommerce</li>
+    <li><strong>Permissions</strong> — <code>Read</code> is enough; Shop Shift never writes to WooCommerce</li>
   </ul>
   <p>Copy the consumer key (<code>ck_…</code>) and secret (<code>cs_…</code>) — WooCommerce shows the secret only once.</p>
 
   <h3>Step 2 — Connect the store</h3>
   <p>
-    In Shift Shop open <strong>WooCommerce</strong>, paste the store URL, key and secret, then press
+    In Shop Shift open <strong>WooCommerce</strong>, paste the store URL, key and secret, then press
     <strong>Test connection</strong>. On success you will see your WooCommerce and WordPress versions.
     Your credentials are encrypted before they are stored and are only ever shown back masked.
   </p>
@@ -219,7 +219,7 @@
   </table>
   <p>
     Phone numbers are the most common source of customer rejections. WooCommerce stores whatever the
-    shopper typed ("0300 1234567"); Shopify requires international format. Shift Shop uses the
+    shopper typed ("0300 1234567"); Shopify requires international format. Shop Shift uses the
     billing country to add the correct calling code and strip the national trunk prefix. If a number
     still cannot be made valid it is left out and the customer is migrated without it.
   </p>
@@ -303,7 +303,7 @@ Finalize
   <h2 id="idempotency">8. Re-running and idempotency</h2>
   <p>
     Every migrated record is written to a mapping table keyed by
-    <code>(shop, entity type, WooCommerce ID)</code>. Before creating anything, Shift Shop looks the
+    <code>(shop, entity type, WooCommerce ID)</code>. Before creating anything, Shop Shift looks the
     record up.
   </p>
   <table>
@@ -319,8 +319,8 @@ Finalize
 
   <h2 id="resilience">9. Error handling and field shedding</h2>
   <p>
-    Real WooCommerce stores contain data Shopify refuses. Rather than failing the whole record, Shift
-    Shop removes the offending <em>optional</em> field and tries again, up to three rounds — so
+    Real WooCommerce stores contain data Shopify refuses. Rather than failing the whole record, Shop
+    Shift removes the offending <em>optional</em> field and tries again, up to three rounds — so
     several bad fields are shed one after another. The record lands, and a warning tells you exactly
     what was left out.
   </p>
@@ -340,7 +340,7 @@ Finalize
   </p>
   <p>
     There is one shortcut worth knowing: if several products in a row have their images rejected,
-    Shift Shop concludes the store's media is unreachable, logs a warning, and stops sending images
+    Shop Shift concludes the store's media is unreachable, logs a warning, and stops sending images
     for the rest of that run. This roughly halves the work on a store whose uploads folder is gone.
   </p>
 
@@ -374,8 +374,8 @@ Finalize
     </tbody>
   </table>
   <div class="note">
-    <strong>This is your Shopify plan, not your Shift Shop plan.</strong> The table in
-    <a href="#plans">section 10</a> is about how many records Shift Shop will migrate for you. This
+    <strong>This is your Shopify plan, not your Shop Shift plan.</strong> The table in
+    <a href="#plans">section 10</a> is about how many records Shop Shift will migrate for you. This
     one is about how quickly Shopify lets us create them, and it is set by whichever Shopify plan
     your store is on. Basic and Grow appear together because Shopify gives them the same API budget.
   </div>
@@ -489,7 +489,7 @@ Finalize
     <li><strong>HMAC verification.</strong> Every OAuth callback and webhook is verified before it is trusted.</li>
     <li><strong>Session-token auth.</strong> Every API call from the embedded app carries a signed Shopify session token, validated on each request.</li>
     <li><strong>Tenant isolation.</strong> Every query is scoped to a single shop.</li>
-    <li><strong>Read-only at the source.</strong> Shift Shop never writes to or deletes from your WooCommerce store.</li>
+    <li><strong>Read-only at the source.</strong> Shop Shift never writes to or deletes from your WooCommerce store.</li>
   </ul>
   <p>See the <a href="/privacy/">privacy policy</a> for what is stored and for how long.</p>
 
@@ -591,7 +591,7 @@ Finalize
 <footer class="footer">
   <div class="footer-inner">
     <div class="footer-bottom">
-      <div>© <span id="year"></span> Webnday Pvt. Ltd — Shift Shop. All rights reserved.</div>
+      <div>© <span id="year"></span> Webnday Pvt. Ltd — Shop Shift. All rights reserved.</div>
       <div>
         <a href="/privacy/">Privacy</a> ·
         <a href="/terms/">Terms</a> ·

@@ -496,7 +496,7 @@ export default function Dashboard() {
                       <div style={{ position: "relative", paddingTop: "56.25%" }}>
                         <iframe
                           src={videoUrl}
-                          title="Shift Shop tutorial"
+                          title="Shop Shift tutorial"
                           allow="accelerometer; autoplay; clipboard-write; encrypted-media; picture-in-picture"
                           allowFullScreen
                           style={{

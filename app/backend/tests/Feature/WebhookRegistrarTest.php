@@ -18,7 +18,7 @@ class WebhookRegistrarTest extends TestCase
         config([
             'services.shopify.api_key' => 'test_key',
             'services.shopify.api_secret' => 'test_secret',
-            'services.shopify.app_url' => 'https://shiftshop.tech/app',
+            'services.shopify.app_url' => 'https://shopshift.net/app',
         ]);
     }
 
@@ -54,8 +54,8 @@ class WebhookRegistrarTest extends TestCase
             $body = json_decode($req->body(), true);
             $url = data_get($body, 'variables.sub.callbackUrl');
             return $url === null
-                || $url === 'https://shiftshop.tech/app/api/webhooks/app-uninstalled'
-                || str_starts_with((string) $url, 'https://shiftshop.tech/app/api/webhooks/');
+                || $url === 'https://shopshift.net/app/api/webhooks/app-uninstalled'
+                || str_starts_with((string) $url, 'https://shopshift.net/app/api/webhooks/');
         });
     }
 
@@ -106,7 +106,7 @@ class WebhookRegistrarTest extends TestCase
                                 'id' => 'gid://shopify/WebhookSubscription/7',
                                 'topic' => 'APP_UNINSTALLED',
                                 'endpoint' => [
-                                    'callbackUrl' => 'https://shiftshop.tech/app/api/webhooks/app-uninstalled',
+                                    'callbackUrl' => 'https://shopshift.net/app/api/webhooks/app-uninstalled',
                                 ],
                             ],
                         ]],

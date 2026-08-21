@@ -87,8 +87,8 @@ class AdminSettingsController extends Controller
 
         try {
             Mail::raw(
-                "This is a test message from Shift Shop.\n\nIf you received it, your SMTP settings are working.",
-                fn ($message) => $message->to($data['to'])->subject('Shift Shop SMTP test'),
+                "This is a test message from Shop Shift.\n\nIf you received it, your SMTP settings are working.",
+                fn ($message) => $message->to($data['to'])->subject('Shop Shift SMTP test'),
             );
         } catch (Throwable $e) {
             return response()->json(['error' => $e->getMessage()], 422);

@@ -405,7 +405,7 @@ class MigrationDiagnosticsTest extends TestCase
             ->streamedContent();
 
         foreach ([
-            'STORE SHIFT — DEVELOPER LOG',
+            'SHOP SHIFT — DEVELOPER LOG',
             'SHOPIFY LIMITS & CONCURRENCY',
             'WHERE THE TIME WENT',
             'WORKERS THAT TOUCHED THIS RUN',

@@ -1,7 +1,7 @@
-# Deploying Shift Shop to Hostinger (shared hosting)
+# Deploying Shop Shift to Hostinger (shared hosting)
 
-Landing page: `https://shiftshop.tech/`
-App: `https://shiftshop.tech/app/`
+Landing page: `https://shopshift.net/`
+App: `https://shopshift.net/app/`
 
 > **On a VPS with root? Use [DEPLOYMENT-VPS.md](DEPLOYMENT-VPS.md) instead.**
 > It covers Ubuntu 24.04 + Apache + MySQL 8 + Redis + a supervisor worker pool
@@ -77,8 +77,8 @@ chmod -R 775 storage bootstrap/cache
 Key values (already set in `.env.production`):
 
 ```ini
-APP_URL=https://shiftshop.tech/app
-SHOPIFY_APP_URL=https://shiftshop.tech/app
+APP_URL=https://shopshift.net/app
+SHOPIFY_APP_URL=https://shopshift.net/app
 APP_DEBUG=false
 DB_DATABASE=ss_main
 DB_USERNAME=ss_root
@@ -253,8 +253,8 @@ Never set `DB_QUEUE_RETRY_AFTER` below ~600.
 
 | Field | Value |
 |---|---|
-| App URL | `https://shiftshop.tech/app` |
-| Allowed redirection URL | `https://shiftshop.tech/app/api/auth/callback` |
+| App URL | `https://shopshift.net/app` |
+| Allowed redirection URL | `https://shopshift.net/app/api/auth/callback` |
 
 > ⚠️ **App URL is the app ROOT, not `/api/auth`.** Sending it to the OAuth
 > endpoint is the old install-flow habit, and it breaks client-side navigation:
@@ -269,9 +269,9 @@ Never set `DB_QUEUE_RETRY_AFTER` below ~600.
 GDPR webhooks:
 
 ```
-https://shiftshop.tech/app/api/webhooks/customers-data-request
-https://shiftshop.tech/app/api/webhooks/customers-redact
-https://shiftshop.tech/app/api/webhooks/shop-redact
+https://shopshift.net/app/api/webhooks/customers-data-request
+https://shopshift.net/app/api/webhooks/customers-redact
+https://shopshift.net/app/api/webhooks/shop-redact
 ```
 
 ---
@@ -279,24 +279,24 @@ https://shiftshop.tech/app/api/webhooks/shop-redact
 ## 8. Verify
 
 ```bash
-curl -I https://shiftshop.tech/                      # 200  landing page
-curl -I https://shiftshop.tech/app/                  # 200  SPA
-curl -I https://shiftshop.tech/app/assets/index-Be5bzpko.js   # 200
-curl -I https://shiftshop.tech/app/admin             # 200  admin login
-curl -i  "https://shiftshop.tech/app/api/auth?shop=YOUR-STORE.myshopify.com"  # 302 → shopify
+curl -I https://shopshift.net/                      # 200  landing page
+curl -I https://shopshift.net/app/                  # 200  SPA
+curl -I https://shopshift.net/app/assets/index-Be5bzpko.js   # 200
+curl -I https://shopshift.net/app/admin             # 200  admin login
+curl -i  "https://shopshift.net/app/api/auth?shop=YOUR-STORE.myshopify.com"  # 302 → shopify
 
 # these MUST NOT return 200
-curl -I https://shiftshop.tech/app/backend/.env
-curl -I https://shiftshop.tech/app/backend/composer.json
+curl -I https://shopshift.net/app/backend/.env
+curl -I https://shopshift.net/app/backend/composer.json
 ```
 
 Install URL:
 
 ```
-https://shiftshop.tech/app/api/auth?shop=YOUR-STORE.myshopify.com
+https://shopshift.net/app/api/auth?shop=YOUR-STORE.myshopify.com
 ```
 
-Admin panel: `https://shiftshop.tech/app/admin`
+Admin panel: `https://shopshift.net/app/admin`
 
 ---
 

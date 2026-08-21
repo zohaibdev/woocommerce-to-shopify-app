@@ -54,7 +54,7 @@ class EmailBrandingTest extends TestCase
     public function test_the_uploaded_logo_reaches_the_rendered_email(): void
     {
         Storage::fake('local');
-        config(['services.shopify.app_url' => 'https://shiftshop.tech/app']);
+        config(['services.shopify.app_url' => 'https://shopshift.net/app']);
 
         Branding::storeLogo(UploadedFile::fake()->image('logo.png'));
 
@@ -62,14 +62,14 @@ class EmailBrandingTest extends TestCase
 
         // An absolute URL, because an email is read outside the app and a
         // relative src resolves against the mail client, not against us.
-        $this->assertStringContainsString('https://shiftshop.tech/app/api/branding/logo', $html);
+        $this->assertStringContainsString('https://shopshift.net/app/api/branding/logo', $html);
         $this->assertStringContainsString('<img', $html);
     }
 
     public function test_replacing_the_logo_changes_the_url_so_clients_cannot_serve_the_old_one(): void
     {
         Storage::fake('local');
-        config(['services.shopify.app_url' => 'https://shiftshop.tech/app']);
+        config(['services.shopify.app_url' => 'https://shopshift.net/app']);
 
         Branding::storeLogo(UploadedFile::fake()->image('old.png'));
         $first = Branding::current()['logo_url'];
@@ -87,18 +87,18 @@ class EmailBrandingTest extends TestCase
 
     public function test_the_name_is_used_when_no_logo_has_been_uploaded(): void
     {
-        config(['services.shopify.app_url' => 'https://shiftshop.tech/app']);
+        config(['services.shopify.app_url' => 'https://shopshift.net/app']);
 
         $html = (new MigrationCompleted($this->migration()))->render();
 
-        $this->assertStringContainsString('Shift Shop', $html);
+        $this->assertStringContainsString('Shop Shift', $html);
         $this->assertStringNotContainsString('Store Shift', $html);
     }
 
     public function test_an_uploaded_logo_survives_the_settings_cache(): void
     {
         Storage::fake('local');
-        config(['services.shopify.app_url' => 'https://shiftshop.tech/app']);
+        config(['services.shopify.app_url' => 'https://shopshift.net/app']);
 
         // Warm the forever-cache with the "no logo" answer first, the way any
         // email sent before the upload would have.

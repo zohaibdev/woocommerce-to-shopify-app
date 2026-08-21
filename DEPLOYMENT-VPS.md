@@ -1,11 +1,11 @@
-# Deploying Shift Shop to a VPS (Ubuntu 24.04 + Apache)
+# Deploying Shop Shift to a VPS (Ubuntu 24.04 + Apache)
 
 For a server you have root on. If you are on Hostinger **shared** hosting, use
 [DEPLOYMENT.md](DEPLOYMENT.md) instead — the two differ mainly in how the queue
 workers are run, which is the single biggest factor in how long a large
 migration takes.
 
-Target: `https://shiftshop.tech/` (landing) and `/app/` (the app).
+Target: `https://shopshift.net/` (landing) and `/app/` (the app).
 
 ---
 
@@ -41,7 +41,7 @@ Download it. You will restore it in step 9.
 
 ### 0.3 DNS
 
-Point `shiftshop.tech` (A record) at the VPS IP. Do this **first** —
+Point `shopshift.net` (A record) at the VPS IP. Do this **first** —
 certbot in step 8 verifies over HTTP and will fail until DNS has propagated.
 Keep the TTL low (300s) until you have finished, so a rollback is quick.
 
@@ -223,7 +223,7 @@ The values that must be right:
 APP_ENV=production
 APP_DEBUG=false
 APP_KEY=base64:...            # ← FROM THE OLD SERVER (step 0.1)
-APP_URL=https://shiftshop.tech/app
+APP_URL=https://shopshift.net/app
 
 DB_CONNECTION=mysql
 DB_HOST=127.0.0.1
@@ -246,7 +246,7 @@ MIGRATION_MAX_CONCURRENCY=8
 
 SHOPIFY_API_KEY=...
 SHOPIFY_API_SECRET=...
-SHOPIFY_APP_URL=https://shiftshop.tech/app
+SHOPIFY_APP_URL=https://shopshift.net/app
 SHOPIFY_BILLING_TEST=false    # ← merchants are never charged while this is true
 
 ADMIN_EMAIL=you@example.com
@@ -297,7 +297,7 @@ sudo chown deploy:www-data app/backend/.env && sudo chmod 640 app/backend/.env
 
 ```apache
 <VirtualHost *:80>
-    ServerName shiftshop.tech
+    ServerName shopshift.net
     DocumentRoot /var/www/store-shift
 
     <Directory /var/www/store-shift>
@@ -345,7 +345,7 @@ sudo chown deploy:www-data app/backend/.env && sudo chmod 640 app/backend/.env
 
 ```bash
 sudo a2ensite store-shift && sudo apache2ctl configtest && sudo systemctl reload apache2
-sudo certbot --apache -d shiftshop.tech
+sudo certbot --apache -d shopshift.net
 ```
 
 Certbot writes the `:443` vhost and a redirect. Choose **"redirect HTTP to
@@ -453,16 +453,16 @@ out.
 ## 12. Verify
 
 ```bash
-curl -I https://shiftshop.tech/           # 200  landing
-curl -I https://shiftshop.tech/app/       # 200  SPA
-curl -I https://shiftshop.tech/app/admin  # 200  admin login
+curl -I https://shopshift.net/           # 200  landing
+curl -I https://shopshift.net/app/       # 200  SPA
+curl -I https://shopshift.net/app/admin  # 200  admin login
 
 # every one of these MUST be 403 or 404 — never 200
-curl -I https://shiftshop.tech/app/backend/.env
-curl -I https://shiftshop.tech/app/backend/composer.json
-curl -I https://shiftshop.tech/.git/config
-curl -I https://shiftshop.tech/CLAUDE.md
-curl -I https://shiftshop.tech/deploy/queue-workers.sh
+curl -I https://shopshift.net/app/backend/.env
+curl -I https://shopshift.net/app/backend/composer.json
+curl -I https://shopshift.net/.git/config
+curl -I https://shopshift.net/CLAUDE.md
+curl -I https://shopshift.net/deploy/queue-workers.sh
 ```
 
 End to end:

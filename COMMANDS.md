@@ -1,4 +1,4 @@
-# COMMANDS.md — Shift Shop
+# COMMANDS.md — Shop Shift
 
 Operational and development command reference. **Every command here was verified
 against this repository** — `composer.json` scripts, `package.json` scripts, the
@@ -14,7 +14,8 @@ actually use.
 
 > **Paths.** Backend commands run from `app/backend` unless stated. On the VPS that is
 > `/var/www/store-shift/app/backend`; on shared hosting `~/public_html/app/backend`.
-> The repo folder is still `store-shift` even though the product is Shift Shop.
+> The repo folder, the git remote and the supervisor config file are all named
+> `store-shift`. Those are *paths and identifiers*, not branding — do not rename them.
 
 ---
 

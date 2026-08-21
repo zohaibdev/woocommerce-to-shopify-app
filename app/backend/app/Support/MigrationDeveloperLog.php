@@ -43,7 +43,7 @@ class MigrationDeveloperLog
 
     public function filename(): string
     {
-        return "store-shift-debug-migration-{$this->migration->id}.txt";
+        return "shop-shift-debug-migration-{$this->migration->id}.txt";
     }
 
     /**
@@ -110,7 +110,7 @@ class MigrationDeveloperLog
 
     private function header(callable $out): void
     {
-        $out('STORE SHIFT — DEVELOPER LOG');
+        $out('SHOP SHIFT — DEVELOPER LOG');
         $out('Generated '.now()->toDateTimeString().' UTC');
         $out(str_repeat('=', 78));
 

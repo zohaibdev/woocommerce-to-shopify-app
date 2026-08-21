@@ -7,7 +7,7 @@ define('LARAVEL_START', microtime(true));
 
 /*
 |--------------------------------------------------------------------------
-| Shift Shop — PRODUCTION front controller  (public_html/app/index.php)
+| Shop Shift — PRODUCTION front controller  (public_html/app/index.php)
 |--------------------------------------------------------------------------
 | The Laravel app lives in a `backend` folder NEXT TO this file, so every path
 | points into ./backend/ — NOT ../ like a stock Laravel install.
