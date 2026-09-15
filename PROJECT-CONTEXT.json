@@ -134,7 +134,7 @@
     "ShopifyTokenService": "EXPIRING offline tokens: token exchange (expiring=1), legacy permanent-token migration, refresh_token flow, ensureFresh().",
     "SessionToken": "Verifies App Bridge JWT (HS256, aud/dest/exp/nbf) with 60s clock-skew leeway.",
     "ShopifyWebhookRegistrar": "Reconciles webhook subscriptions via GraphQL — UPDATES stale callback URLs instead of duplicating.",
-    "ShopifyBilling": "appSubscriptionCreate, confirmation URL, activate on callback, cancel. Free plans recorded locally without touching Shopify.",
+    "ShopifyBilling": "appSubscriptionCreate, confirmation URL, activate on callback (matched to the callback charge_id), cancel, sync, uninstall. SHOPIFY IS THE SOURCE OF TRUTH: sync() reconciles local rows against currentAppInstallation.activeSubscriptions/allSubscriptions and runs on GET /api/billing, the app_subscriptions/update webhook and a failed cancel; a failed lookup changes nothing. A cancelled PAID plan keeps access until the end of the paid period (current_period_end, captured while active because Shopify returns it null once inactive). Switching to Free cancels the Shopify charge first. Re-approving a plan during its grace period passes trialDays = days remaining so the same days are not billed twice.",
     "WooCommerceClient": "REST v3 wrapper. Retries only transient failures (never 4xx). X-WP-Total for counts."
   },
   "database_tables": {
@@ -147,7 +147,7 @@
     "migration_logs": "info/warning/error per migration",
     "admin_users": "super admin, api_token_hash (sha256)",
     "plans": "code, name, price, interval, limits(json), active",
-    "subscriptions": "shop_id, plan_id, status, shopify_charge_id",
+    "subscriptions": "shop_id, plan_id, status, shopify_charge_id, started_at, current_period_end, cancelled_at, cancellation_reason (uninstalled|merchant|replaced|declined|shopify|expired|frozen), ends_at = when the plan STOPS GRANTING ACCESS (end of paid period for a cancelled paid plan, not the moment of cancelling)",
     "support_tickets / ticket_replies": "merchant support with admin replies",
     "dashboard_contents": "admin-managed content shown in the merchant app",
     "app_settings": "admin-editable app config. One ENCRYPTED json blob per key: 'mail' = SMTP (overrides .env at boot via MailSettings::apply()), 'branding' = email logo + name (App\\Services\\Branding). The logo file lives in storage/app/branding and is streamed by the public GET /api/branding/logo route, so no storage:link is needed.",
@@ -212,7 +212,7 @@
         "reviews": null
       }
     },
-    "fallback": "A shop with no active subscription automatically gets the 'starter' plan."
+    "fallback": "Plan resolution is Shop::entitlingSubscription(): an active PAID subscription, else a cancelled paid one still inside its paid period, else an active free record, else the 'starter' plan. The grace period deliberately outranks the free record that 'Switch to Free' writes."
   },
   "frontend_pages": {
     "merchant": [
@@ -484,6 +484,12 @@
       "fix": "MigrationController skips an implied entity whose limit is 0. CurrentShop is resolved before the loop so the plan is available to it."
     },
     {
+      "issue": "App Store rejection 1.2.2 — reinstall did not reflect a cancelled subscription or its remaining time",
+      "symptom": "Reviewer uninstalled and reinstalled: the app still presented the cancelled paid plan as current, with no cancellation notice and no paid-until date. Found alongside it: a DECLINED upgrade was granted, and 'Switch to Free' never cancelled the Shopify charge, so the merchant kept being billed.",
+      "cause": "app/uninstalled only cleared the token, leaving the subscription 'active'. A reinstall arrives by token exchange (Shopify managed install), never the OAuth callback, so nothing refreshed billing state — and token exchange never cleared uninstalled_at either. activate() accepted ANY active subscription rather than the approved charge. subscribe(free) wrote a local row only.",
+      "fix": "Uninstall marks paid charges cancelled (reason 'uninstalled', ends_at = paid period end). ShopifyBilling::sync() reconciles with Shopify on GET /api/billing and on the new app_subscriptions/update webhook (registered by ShopifyWebhookRegistrar). activate() checks the callback's charge_id and records declines. Switching to Free cancels on Shopify first and refuses if that cannot be confirmed. GET /api/billing returns a `subscription` lifecycle object (active | cancelled_grace | ended | free, with access_until and days_remaining) rendered by SubscriptionStatusBanner on Home and Pricing. ShopifyTokenService clears uninstalled_at on reinstall. BillingLifecycleTest replays the reviewer's scenario."
+    },
+    {
       "issue": "Plan allowances NEVER reset — a recurring subscription behaved like a one-off purchase",
       "symptom": "A merchant on $19/month migrated their 2,000 products in month one, then paid every month afterwards to be told they were 'exhausted'",
       "cause": "PlanAllowance and PlanPool counted migration_items over ALL TIME, with no date filter of any kind. Proven by AllowanceResetTest before the fix.",
@@ -698,6 +704,7 @@
       "WooConnectionSettingsTest": "The connection form, which a merchant only visits when something is already wrong: a URL corrected without re-entering the API keys, a failed save leaving the working credentials intact, a scheme-less store URL accepted, a first connection still requiring both credentials, and the store's own refusal reaching the client.",
       "BlogEndToEndTest": "Blogs driven the way a real run drives them — plan a batch, resolve source ids, fetch by include=, write. The unit test passes a category array straight to migrateItem() and so never touches the WooCommerce read path, which is why a run reporting '0 records' looked identical to one that worked.",
       "PlanFeatureGatingTest": "What a plan SELLS as opposed to how much volume it allows: a plan without metafields sends neither metafields nor brand tags but still sends the vendor; content entities lock on their own keys; blog posts follow the blogs key; a plan that never set the new keys stays unlimited; and the API refuses a locked content entity.",
+      "BillingLifecycleTest": "App Store 1.2.2: uninstall then reinstall shows the cancelled plan with days remaining; a missed uninstall webhook is reconciled from Shopify; the plan falls to Free once paid time runs out; re-approving during grace sends trialDays; a declined upgrade is not granted; an approved charge replaces the old plan; Switch to Free really cancels on Shopify and keeps the paid days; a failed Shopify lookup never downgrades; app_subscriptions/update applies a cancellation and rejects a bad HMAC.",
       "AllowanceResetTest": "That a monthly plan's allowance actually comes back: an older spend does not count against this period, a spend inside it still does, the pool resets the same way, the period is anchored to the merchant's own billing date, and a free shop gets a month too. NOTE: the first version of this suite passed while proving nothing, because created_at is not fillable and create() silently stamped every row with now() — backdating needs forceFill + saveQuietly.",
       "RetrySweepTest": "'Retry failed items' as a FINITE sweep, which it was not: a pass resumes past its cursor instead of starting over; a record that fails again is not attempted twice in one sweep and the run still ENDS (the old exit condition was 'nothing is failed any more', which a systemic refusal never satisfies); a throttled chunk resumes at its start rather than being stepped over; and a chunk that never stops being throttled is eventually swept past.",
       "GdprWebhookTest": "The three privacy webhooks Shopify requires. customers/redact really deletes the subject's mapping rows; a customer id is matched WHOLE, never by suffix (4191167 must not be erased for 191167); one shop's redaction cannot reach another's rows; an unsigned request is refused; an unknown shop is still a success; shop/redact purges everything. Asserted on the ROWS, because {ok:true} looks the same whether it erased anything or not.",

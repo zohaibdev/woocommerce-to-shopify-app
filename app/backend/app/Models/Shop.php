@@ -67,6 +67,33 @@ class Shop extends Model
         return $this->hasOne(Subscription::class)->where('status', 'active')->latestOfMany();
     }
 
+    /**
+     * The subscription that decides the shop's plan right now.
+     *
+     *   1. an ACTIVE paid subscription;
+     *   2. else a CANCELLED paid one whose paid period has not run out — a
+     *      merchant who cancels, downgrades to Free or uninstalls keeps what they
+     *      already paid for until the period ends;
+     *   3. else an active free record.
+     *
+     * A grace period outranks the free record on purpose: "Switch to Free" writes
+     * one immediately, and without this order the downgrade would take the paid
+     * days away at once.
+     */
+    public function entitlingSubscription(): ?Subscription
+    {
+        $candidates = $this->subscriptions()
+            ->with('plan')
+            ->where(fn ($q) => $q->where('status', 'active')
+                ->orWhere(fn ($q) => $q->where('status', 'cancelled')->where('ends_at', '>', now())))
+            ->orderByDesc('id')
+            ->get();
+
+        return $candidates->first(fn (Subscription $s) => $s->status === 'active' && $s->isPaid())
+            ?? $candidates->first(fn (Subscription $s) => $s->inPaidGracePeriod() && $s->isPaid())
+            ?? $candidates->first(fn (Subscription $s) => $s->status === 'active');
+    }
+
     public function tickets(): HasMany
     {
         return $this->hasMany(SupportTicket::class);
@@ -95,7 +122,7 @@ class Shop extends Model
             return $this->planCache;
         }
 
-        $subscribed = $this->activeSubscription()->with('plan')->first()?->plan;
+        $subscribed = $this->entitlingSubscription()?->plan;
 
         $this->planResolved = true;
 

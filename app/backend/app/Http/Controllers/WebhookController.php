@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\MigrationItem;
 use App\Models\Shop;
+use App\Services\ShopifyBilling;
 use App\Services\ShopifyOAuth;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -11,15 +12,41 @@ use Illuminate\Support\Facades\Log;
 
 class WebhookController extends Controller
 {
-    /** app/uninstalled — clear the shop's token and mark it uninstalled. */
-    public function appUninstalled(Request $request): JsonResponse
+    /**
+     * app/uninstalled — clear the shop's token, mark it uninstalled, and record
+     * that Shopify has cancelled its charge.
+     *
+     * Leaving the subscription 'active' here is what let a reinstall show the
+     * cancelled paid plan as the merchant's current one (App Store review 1.2.2).
+     */
+    public function appUninstalled(Request $request, ShopifyBilling $billing): JsonResponse
     {
         $shopDomain = $this->verify($request);
 
-        Shop::where('shopify_domain', $shopDomain)->update([
-            'access_token' => null,
-            'uninstalled_at' => now(),
-        ]);
+        $shop = Shop::where('shopify_domain', $shopDomain)->first();
+
+        if ($shop) {
+            $shop->forceFill(['access_token' => null, 'uninstalled_at' => now()])->save();
+            $billing->handleUninstall($shop);
+        }
+
+        return response()->json(['ok' => true]);
+    }
+
+    /** app_subscriptions/update — a charge was approved, cancelled, frozen or expired on Shopify's side. */
+    public function appSubscriptionsUpdate(Request $request, ShopifyBilling $billing): JsonResponse
+    {
+        $shopDomain = $this->verify($request);
+
+        $shop = Shop::where('shopify_domain', $shopDomain)->first();
+
+        if ($shop) {
+            $billing->handleSubscriptionUpdate(
+                $shop,
+                data_get($request->json()->all(), 'app_subscription.admin_graphql_api_id'),
+                data_get($request->json()->all(), 'app_subscription.status'),
+            );
+        }
 
         return response()->json(['ok' => true]);
     }

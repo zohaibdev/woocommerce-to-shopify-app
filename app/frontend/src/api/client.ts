@@ -354,9 +354,30 @@ export interface BillingPlan {
   is_current: boolean;
 }
 
+/**
+ * Where the shop's paid subscription stands.
+ *
+ * - `active`          paying; renews on `current_period_end`
+ * - `cancelled_grace` cancelled or uninstalled, but paid up — keeps the plan until `access_until`
+ * - `ended`           a paid plan ran out; the shop is on the free plan now
+ * - `free`            never had a paid plan
+ */
+export interface SubscriptionLifecycle {
+  state: "active" | "cancelled_grace" | "ended" | "free";
+  status: string | null;
+  plan: { code: string; name: string; price: number } | null;
+  started_at: string | null;
+  current_period_end: string | null;
+  cancelled_at: string | null;
+  cancellation_reason: "uninstalled" | "merchant" | "replaced" | "declined" | "shopify" | "expired" | "frozen" | null;
+  access_until: string | null;
+  days_remaining: number;
+}
+
 export interface BillingInfo {
   current_plan: { code: string; name: string; price: number; limits: PlanLimits } | null;
   subscription_status: string | null;
+  subscription: SubscriptionLifecycle;
   plans: BillingPlan[];
 }
 

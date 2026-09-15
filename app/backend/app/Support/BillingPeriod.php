@@ -63,7 +63,9 @@ class BillingPeriod
      */
     private static function anchor(Shop $shop): CarbonInterface
     {
-        $subscription = $shop->activeSubscription()->first();
+        // The entitling subscription, not merely the active one: a plan kept
+        // through a paid grace period is still metered from its own billing date.
+        $subscription = $shop->entitlingSubscription();
 
         return ($subscription?->started_at
             ?? $shop->installed_at

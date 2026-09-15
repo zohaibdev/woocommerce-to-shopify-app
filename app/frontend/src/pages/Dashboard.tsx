@@ -35,7 +35,10 @@ import {
   type EntityCount,
   type Migration,
   type ContentItem,
+  type SubscriptionLifecycle,
 } from "../api/client";
+import SubscriptionStatusBanner from "../components/SubscriptionStatusBanner";
+import { hasSubscriptionNotice } from "../components/subscriptionNotice";
 import { loadSettings } from "../settings";
 import { openExternal, redirectTop } from "../navigation";
 
@@ -94,6 +97,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [content, setContent] = useState<ContentItem[]>([]);
+  const [subscription, setSubscription] = useState<SubscriptionLifecycle | null>(null);
   const timer = useRef<number | null>(null);
 
   // Admin-managed content wins; fall back to local settings when none exists.
@@ -133,6 +137,16 @@ export default function Dashboard() {
 
         if (cancelled) return;
         setShop(s);
+
+        // A reinstall lands HERE, and Shopify cancelled the paid charge on
+        // uninstall — the merchant must be told, not left to find the pricing
+        // page. Billing reconciles with Shopify, so never let it block the page.
+        api
+          .billing()
+          .then(({ subscription }) => {
+            if (!cancelled) setSubscription(subscription);
+          })
+          .catch(() => undefined);
 
         // Content is admin-managed; never let it block the dashboard.
         api
@@ -290,6 +304,16 @@ export default function Dashboard() {
             <Banner tone="critical" title="Something went wrong">
               {error}
             </Banner>
+          </Layout.Section>
+        )}
+
+        {hasSubscriptionNotice(subscription, true) && (
+          <Layout.Section>
+            <SubscriptionStatusBanner
+              subscription={subscription}
+              compact
+              onResubscribe={() => navigate("/pricing")}
+            />
           </Layout.Section>
         )}
 

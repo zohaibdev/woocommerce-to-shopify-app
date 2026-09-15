@@ -19,6 +19,11 @@ import { CheckIcon, XSmallIcon } from "@shopify/polaris-icons";
 import { useNavigate } from "react-router-dom";
 import { api, type BillingInfo, type BillingPlan } from "../api/client";
 import { redirectTop } from "../navigation";
+import SubscriptionStatusBanner from "../components/SubscriptionStatusBanner";
+import { hasSubscriptionNotice } from "../components/subscriptionNotice";
+
+const shortDate = (iso: string | null) =>
+  iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "";
 
 const cap = (v: number | null | undefined) =>
   v === null || v === undefined ? "Unlimited" : v.toLocaleString();
@@ -99,12 +104,34 @@ export default function Pricing() {
     );
   }
 
+  const sub = info.subscription;
+  // Cancelled but still paid up: the plan is current, yet it will not renew —
+  // the merchant has to approve it again, so it must not look like a dead button.
+  const graceCode = sub?.state === "cancelled_grace" ? sub.plan?.code : undefined;
+  const resubscribe = () => {
+    const plan = info.plans.find((p) => p.code === sub?.plan?.code);
+    if (plan) choose(plan);
+  };
+
+  const subtitle = !info.current_plan
+    ? undefined
+    : graceCode
+      ? `You're on the ${info.current_plan.name} plan until ${shortDate(sub.access_until)} — cancelled, will not renew`
+      : sub?.state === "active" && sub.current_period_end
+        ? `You're on the ${info.current_plan.name} plan · renews ${shortDate(sub.current_period_end)}`
+        : `You're on the ${info.current_plan.name} plan`;
+
   return (
-    <Page
-      title="Plans & pricing"
-      subtitle={info.current_plan ? `You're on the ${info.current_plan.name} plan` : undefined}
-    >
+    <Page title="Plans & pricing" subtitle={subtitle}>
       <Layout>
+        {hasSubscriptionNotice(sub) && (
+          <Layout.Section>
+            <SubscriptionStatusBanner
+              subscription={sub}
+              onResubscribe={info.plans.some((p) => p.code === sub.plan?.code) ? resubscribe : undefined}
+            />
+          </Layout.Section>
+        )}
         {error && (
           <Layout.Section>
             <Banner tone="critical" title="Could not change plan" onDismiss={() => setError(null)}>
@@ -130,7 +157,13 @@ export default function Pricing() {
                       <Text as="h2" variant="headingMd">
                         {p.name}
                       </Text>
-                      {p.is_current && <Badge tone="success">Current</Badge>}
+                      {p.code === graceCode ? (
+                        <Badge tone="warning">{`Ends ${shortDate(sub.access_until)}`}</Badge>
+                      ) : graceCode && p.price === 0 ? (
+                        <Badge>{`From ${shortDate(sub.access_until)}`}</Badge>
+                      ) : (
+                        p.is_current && <Badge tone="success">Current</Badge>
+                      )}
                     </InlineStack>
                     <InlineStack gap="100" blockAlign="end">
                       <Text as="span" variant="heading2xl">
@@ -199,17 +232,21 @@ export default function Pricing() {
                       </Button>
                     ) : (
                       <Button
-                        variant={p.is_current ? "secondary" : "primary"}
-                        disabled={p.is_current}
+                        variant={p.is_current && p.code !== graceCode ? "secondary" : "primary"}
+                        disabled={(p.is_current && p.code !== graceCode) || (!!graceCode && p.price === 0)}
                         loading={busy === p.code}
                         onClick={() => choose(p)}
                         fullWidth
                       >
-                        {p.is_current
-                          ? "Current plan"
-                          : p.price === 0
-                            ? "Switch to Free"
-                            : `Upgrade to ${p.name}`}
+                        {p.code === graceCode
+                          ? `Resubscribe to ${p.name}`
+                          : graceCode && p.price === 0
+                            ? "Applies when paid time ends"
+                            : p.is_current
+                              ? "Current plan"
+                              : p.price === 0
+                                ? "Switch to Free"
+                                : `Upgrade to ${p.name}`}
                       </Button>
                     )}
                   </Box>
@@ -228,8 +265,10 @@ export default function Pricing() {
               <Text as="p" tone="subdued" variant="bodySm">
                 Paid plans are charged through Shopify and appear on your regular Shopify invoice.
                 You approve the charge on Shopify's own screen — we never see your card. You can
-                switch back to the Free plan at any time; limits then apply to future migrations
-                only, and nothing already migrated is removed.
+                switch back to the Free plan at any time: your paid plan stays active until the end of
+                the period you have already paid for, then Free limits apply to future migrations
+                only, and nothing already migrated is removed. Uninstalling the app cancels the
+                subscription the same way; if you reinstall, approve the plan again to keep it.
               </Text>
             </BlockStack>
           </Card>

@@ -233,6 +233,19 @@ table** and are editable from `/app/admin/plans` — no deploy needed. `AdminSee
 *creates* missing plans (it used to overwrite, which reset admin-set prices on every
 deploy); use `PLAN_SEED_OVERWRITE=true` to deliberately push code values out.
 
+**Shopify is the source of truth for billing.** `ShopifyBilling::sync()` reconciles local
+subscriptions against Shopify whenever billing is shown and on `app_subscriptions/update`.
+Shopify cancels every charge on uninstall, and a reinstall arrives through token exchange —
+not the OAuth callback — so without the sync a reinstall showed the cancelled plan as
+current (App Store rejection 1.2.2).
+
+- A cancelled **paid** plan keeps access until the end of the period already paid for
+  (`subscriptions.ends_at`). Shopify reports `currentPeriodEnd` as null once a charge is
+  inactive, so it is stored while active.
+- Switching to Free cancels the Shopify charge first; re-approving a plan during its grace
+  period passes `trialDays` so those days are not billed twice.
+- Home and Pricing show `SubscriptionStatusBanner` for a cancelled or recently ended plan.
+
 ## Email System
 
 - SMTP is configured **in the database** (`app_settings`, encrypted), edited at

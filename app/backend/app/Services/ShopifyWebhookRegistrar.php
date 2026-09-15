@@ -20,6 +20,8 @@ class ShopifyWebhookRegistrar
     /** topic => route path */
     private const TOPICS = [
         'APP_UNINSTALLED' => '/api/webhooks/app-uninstalled',
+        // Billing changes made on Shopify's side (approval, cancel, freeze, expiry).
+        'APP_SUBSCRIPTIONS_UPDATE' => '/api/webhooks/app-subscriptions-update',
         'CUSTOMERS_DATA_REQUEST' => '/api/webhooks/customers-data-request',
         'CUSTOMERS_REDACT' => '/api/webhooks/customers-redact',
         'SHOP_REDACT' => '/api/webhooks/shop-redact',

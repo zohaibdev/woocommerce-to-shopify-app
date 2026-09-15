@@ -36,6 +36,7 @@ Route::get('/plans', [BillingController::class, 'publicPlans']);
 
 // --- Shopify webhooks (HMAC-verified inside the controller) ---
 Route::post('/webhooks/app-uninstalled', [WebhookController::class, 'appUninstalled']);
+Route::post('/webhooks/app-subscriptions-update', [WebhookController::class, 'appSubscriptionsUpdate']);
 Route::post('/webhooks/customers-data-request', [WebhookController::class, 'customersDataRequest']);
 Route::post('/webhooks/customers-redact', [WebhookController::class, 'customersRedact']);
 Route::post('/webhooks/shop-redact', [WebhookController::class, 'shopRedact']);

@@ -174,7 +174,7 @@ GET  /api/auth, /api/auth/callback          Shopify OAuth
 GET  /api/billing/callback                  Shopify billing return
 GET  /api/branding/logo                     email logo (mail clients have no session)
 POST /api/contact                           throttle:5,60
-POST /api/webhooks/app-uninstalled
+POST /api/webhooks/app-uninstalled | app-subscriptions-update      (HMAC-verified)
 POST /api/webhooks/customers-data-request | customers-redact | shop-redact   (GDPR, HMAC-verified)
 ```
 

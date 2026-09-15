@@ -149,7 +149,16 @@ class ShopifyTokenService
             'refresh_token_expires_at' => isset($data['refresh_token_expires_in'])
                 ? now()->addSeconds((int) $data['refresh_token_expires_in'])
                 : $shop->refresh_token_expires_at,
-        ], fn ($v) => $v !== null))->save();
+        ], fn ($v) => $v !== null));
+
+        // A token for an uninstalled shop means it was reinstalled. With Shopify
+        // managed install that happens HERE, never in the OAuth callback, so this
+        // is the only place the reinstall can be recorded.
+        if ($shop->uninstalled_at) {
+            $shop->forceFill(['installed_at' => now(), 'uninstalled_at' => null]);
+        }
+
+        $shop->save();
 
         return $shop->refresh();
     }
