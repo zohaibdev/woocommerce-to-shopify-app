@@ -23,6 +23,7 @@ class Shop extends Model
         'installed_at' => 'datetime',
         'uninstalled_at' => 'datetime',
         'limits_checked_at' => 'datetime',
+        'billing_synced_at' => 'datetime',
     ];
 
     protected $hidden = ['access_token', 'refresh_token'];
@@ -61,37 +62,25 @@ class Shop extends Model
         return $this->hasMany(Subscription::class);
     }
 
-    /** The shop's current (most recent active) subscription. */
+    /**
+     * The shop's current (most recent active) subscription.
+     *
+     * The status filter MUST sit inside ofMany(). Chained before latestOfMany()
+     * it lands outside the MAX(id) subquery, which made this "the newest row, if
+     * that row happens to be active" — so a declined upgrade, an abandoned charge
+     * or a cancellation record created after the live subscription hid it: the
+     * admin panel said "No subscription" and the app applied Starter limits to a
+     * merchant who was paying.
+     */
     public function activeSubscription(): HasOne
     {
-        return $this->hasOne(Subscription::class)->where('status', 'active')->latestOfMany();
+        return $this->hasOne(Subscription::class)
+            ->ofMany(['id' => 'max'], fn ($query) => $query->where('status', 'active'));
     }
 
-    /**
-     * The subscription that decides the shop's plan right now.
-     *
-     *   1. an ACTIVE paid subscription;
-     *   2. else a CANCELLED paid one whose paid period has not run out — a
-     *      merchant who cancels, downgrades to Free or uninstalls keeps what they
-     *      already paid for until the period ends;
-     *   3. else an active free record.
-     *
-     * A grace period outranks the free record on purpose: "Switch to Free" writes
-     * one immediately, and without this order the downgrade would take the paid
-     * days away at once.
-     */
-    public function entitlingSubscription(): ?Subscription
+    public function billingEvents(): HasMany
     {
-        $candidates = $this->subscriptions()
-            ->with('plan')
-            ->where(fn ($q) => $q->where('status', 'active')
-                ->orWhere(fn ($q) => $q->where('status', 'cancelled')->where('ends_at', '>', now())))
-            ->orderByDesc('id')
-            ->get();
-
-        return $candidates->first(fn (Subscription $s) => $s->status === 'active' && $s->isPaid())
-            ?? $candidates->first(fn (Subscription $s) => $s->inPaidGracePeriod() && $s->isPaid())
-            ?? $candidates->first(fn (Subscription $s) => $s->status === 'active');
+        return $this->hasMany(BillingEvent::class);
     }
 
     public function tickets(): HasMany
@@ -100,40 +89,103 @@ class Shop extends Model
     }
 
     /**
-     * The shop's effective plan. Every shop always has one — with no paid
-     * subscription they fall back to the free Starter plan.
+     * Days an ACTIVE paid subscription keeps its plan after its billing period
+     * should have renewed without this app being able to confirm the renewal.
+     *
+     * Shopify sends no webhook on an ordinary renewal (APP_SUBSCRIPTIONS_UPDATE
+     * fires on status changes), so current_period_end only advances when a sync
+     * succeeds — the hourly billing:sync does that. A period end this far in the
+     * past means every sync has failed for a week; the plan is then treated as
+     * unverified rather than granted indefinitely on stale data.
      */
+    public const UNVERIFIED_AFTER_DAYS = 7;
+
     /**
      * Memoised for the life of this model instance.
      *
-     * This is two queries, and it is now consulted PER RECORD — planAllows() runs
-     * on every product to decide whether the plan includes metafields. Unmemoised
+     * This is two queries, and it is consulted PER RECORD — planAllows() runs on
+     * every product to decide whether the plan includes metafields. Unmemoised
      * that is two extra queries per product, which on a 50,000-product catalogue
      * is 100,000 queries buying nothing: a shop's plan cannot change part-way
      * through a batch, and a fresh worker gets a fresh instance anyway.
+     *
+     * @var array{subscription: ?Subscription, plan: ?Plan, basis: string}|null
      */
-    private ?Plan $planCache = null;
+    private ?array $entitlementCache = null;
 
-    private bool $planResolved = false;
-
-    public function currentPlan(): ?Plan
+    /**
+     * What this shop is entitled to right now, and why. THE rule — the merchant
+     * app, the admin panel, plan gating and migrations all read it, so they can
+     * never disagree (they did: after an uninstall the app showed Basic while the
+     * admin panel showed no subscription).
+     *
+     * basis:
+     *   active        an ACTIVE paid subscription
+     *   paid_through  a cancelled paid subscription inside the period already paid
+     *                 for (not prorated). Shopify: on uninstall "a credit isn't
+     *                 applied … merchants can reinstall and use the app for the
+     *                 remainder of the billing period".
+     *   free          no paid entitlement — the free Starter plan
+     *
+     * Not entitled: pending, declined, expired and FROZEN subscriptions (Shopify
+     * holds a frozen one for non-payment), and an active one whose renewal has
+     * gone unconfirmed for UNVERIFIED_AFTER_DAYS.
+     *
+     * @return array{subscription: ?Subscription, plan: ?Plan, basis: string}
+     */
+    public function entitlement(): array
     {
-        if ($this->planResolved) {
-            return $this->planCache;
+        if ($this->entitlementCache !== null) {
+            return $this->entitlementCache;
         }
 
-        $subscribed = $this->entitlingSubscription()?->plan;
+        $candidates = $this->subscriptions()
+            ->with('plan')
+            ->where(fn ($q) => $q->where('status', Subscription::ACTIVE)
+                ->orWhere(fn ($q) => $q->where('status', Subscription::CANCELLED)->where('ends_at', '>', now())))
+            ->orderByDesc('id')
+            ->get();
 
-        $this->planResolved = true;
+        $active = $candidates->first(fn (Subscription $s) => $s->status === Subscription::ACTIVE);
 
-        return $this->planCache = $subscribed ?: Plan::where('code', 'starter')->first();
+        if ($active && $active->isPaid() && ! self::renewalUnverified($active)) {
+            return $this->entitlementCache = ['subscription' => $active, 'plan' => $active->plan, 'basis' => 'active'];
+        }
+
+        $paidThrough = $candidates->first(fn (Subscription $s) => $s->grantsPaidAccess());
+
+        if ($paidThrough) {
+            return $this->entitlementCache = ['subscription' => $paidThrough, 'plan' => $paidThrough->plan, 'basis' => 'paid_through'];
+        }
+
+        // A free "subscription" row from before free plans stopped being recorded.
+        $freeRow = $active && ! $active->isPaid() ? $active : null;
+
+        return $this->entitlementCache = [
+            'subscription' => $freeRow,
+            'plan' => $freeRow?->plan ?? Plan::where('code', 'starter')->first(),
+            'basis' => 'free',
+        ];
     }
 
-    /** Drop the memoised plan — for tests and for code that changes a subscription. */
+    /** An active paid subscription whose renewal nobody has confirmed for a week. */
+    public static function renewalUnverified(Subscription $subscription): bool
+    {
+        return $subscription->status === Subscription::ACTIVE
+            && $subscription->current_period_end !== null
+            && $subscription->current_period_end->lt(now()->subDays(self::UNVERIFIED_AFTER_DAYS));
+    }
+
+    /** The shop's effective plan. Every shop always has one. */
+    public function currentPlan(): ?Plan
+    {
+        return $this->entitlement()['plan'];
+    }
+
+    /** Drop the memoised entitlement — for tests and for code that changes a subscription. */
     public function forgetPlan(): void
     {
-        $this->planResolved = false;
-        $this->planCache = null;
+        $this->entitlementCache = null;
     }
 
     /**

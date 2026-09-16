@@ -38,7 +38,11 @@ return [
     'shopify' => [
         'api_key' => env('SHOPIFY_API_KEY'),
         'api_secret' => env('SHOPIFY_API_SECRET'),
-        'api_version' => env('SHOPIFY_API_VERSION', '2024-10'),
+        // Pin a SUPPORTED stable version. Shopify serves an unsupported one (the old
+        // default here, 2024-10) from the oldest supported version instead, and
+        // apps using unsupported resources get delisted. 2026-07 is supported
+        // until July 16, 2027 — see https://shopify.dev/docs/api/usage/versioning
+        'api_version' => env('SHOPIFY_API_VERSION', '2026-07'),
         // write_content covers blogs, articles and pages; write_discounts covers
         // coupons. Adding a scope means every already-installed merchant is asked
         // to re-authorize on their next load — ShopifyOAuth diffs the granted
@@ -51,6 +55,12 @@ return [
         'token_leeway' => (int) env('SHOPIFY_TOKEN_LEEWAY', 60),
         // Test charges: merchants are never billed. Keep true until the app is live.
         'billing_test' => (bool) env('SHOPIFY_BILLING_TEST', true),
+        // appSubscriptionCancel(prorate:). false (Shopify's default): no credit,
+        // and the merchant keeps the plan until the end of the period they already
+        // paid for. true: Shopify credits the unused part — deducted from the
+        // Partner payout — and the plan ends immediately. The cancel dialog
+        // explains whichever is configured.
+        'billing_prorate_cancellations' => (bool) env('SHOPIFY_BILLING_PRORATE_CANCELLATIONS', false),
     ],
 
     'support' => [

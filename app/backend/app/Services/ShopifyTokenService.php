@@ -154,11 +154,22 @@ class ShopifyTokenService
         // A token for an uninstalled shop means it was reinstalled. With Shopify
         // managed install that happens HERE, never in the OAuth callback, so this
         // is the only place the reinstall can be recorded.
-        if ($shop->uninstalled_at) {
+        $reinstalled = $shop->uninstalled_at !== null;
+        if ($reinstalled) {
             $shop->forceFill(['installed_at' => now(), 'uninstalled_at' => null]);
         }
 
         $shop->save();
+
+        if ($reinstalled) {
+            // Nothing from the previous installation may still show as active.
+            // Never fails the token exchange that the merchant's request needs.
+            try {
+                app(ShopifyBilling::class)->handleReinstall($shop);
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
 
         return $shop->refresh();
     }

@@ -17,6 +17,7 @@ import {
 } from "@shopify/polaris";
 import { useParams, useNavigate } from "react-router-dom";
 import { adminApi, type EntityResetMode, type StoreEntityRow } from "../api";
+import StoreBilling from "../StoreBilling";
 
 /**
  * What each reset mode actually does to the merchant's Shopify store, in the
@@ -127,7 +128,7 @@ export default function AdminStoreDetail() {
               <InlineStack align="space-between">
                 <Text as="span">Plan</Text>
                 <Text as="span" tone="subdued">
-                  {s.plan ? `${s.plan} (${s.plan_status})` : "No subscription"}
+                  {s.plan ? `${s.plan} (${s.plan_status})` : "No plan"}
                 </Text>
               </InlineStack>
               <InlineStack align="space-between">
@@ -144,6 +145,15 @@ export default function AdminStoreDetail() {
               </InlineStack>
             </BlockStack>
           </Card>
+        </Layout.Section>
+
+        <Layout.Section>
+          <StoreBilling
+            storeId={s.id}
+            domain={s.shopify_domain}
+            installed={s.installed}
+            initial={{ billing: data.billing, subscriptions: data.subscriptions, billing_events: data.billing_events }}
+          />
         </Layout.Section>
 
         <Layout.Section>

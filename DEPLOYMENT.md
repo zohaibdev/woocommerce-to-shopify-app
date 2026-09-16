@@ -205,6 +205,7 @@ cd ~/public_html/app/backend && php artisan migration:prune
 | Queue workers | `* * * * *` | `/bin/bash ~/queue-workers.sh >> ~/worker-cron.log 2>&1` | **Yes** — nothing migrates without it |
 | Watchdog | `*/5 * * * *` | `cd ~/public_html/app/backend && php artisan migration:watchdog` | **Yes** — nothing recovers without it |
 | Prune | `0 3 * * *` | `cd ~/public_html/app/backend && php artisan migration:prune` | Recommended |
+| Billing sync | `0 * * * *` | `cd ~/public_html/app/backend && php artisan billing:sync` | **Yes** — Shopify sends no webhook on a routine renewal; without it renewals, expiries and missed cancellations are never seen |
 
 > Do **not** also add Laravel's `schedule:run` cron. `routes/console.php`
 > registers these on the scheduler, so running both would just start the same

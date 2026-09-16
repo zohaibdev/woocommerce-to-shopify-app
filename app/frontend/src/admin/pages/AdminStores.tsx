@@ -15,6 +15,7 @@ import {
 } from "@shopify/polaris";
 import { useNavigate } from "react-router-dom";
 import { adminApi, type AdminStore, type PageMeta } from "../api";
+import { shortDate, STATE_LABEL } from "../../billing/format";
 
 export default function AdminStores() {
   const navigate = useNavigate();
@@ -101,7 +102,18 @@ export default function AdminStores() {
                   </IndexTable.Cell>
                   <IndexTable.Cell>
                     {s.plan ? (
-                      <Badge tone="info">{`${s.plan}${s.plan_status ? ` · ${s.plan_status}` : ""}`}</Badge>
+                      <InlineStack gap="100" wrap={false}>
+                        <Badge tone="info">{`${s.plan}${s.plan_status ? ` · ${s.plan_status}` : ""}`}</Badge>
+                        {/* The billing states support gets asked about. */}
+                        {s.subscription && s.subscription.state !== "active" && s.subscription.state !== "free" && (
+                          <Badge tone={STATE_LABEL[s.subscription.state]?.tone}>
+                            {s.subscription.state === "cancelled"
+                              ? `${s.subscription.plan?.name ?? "Plan"} cancelled · until ${shortDate(s.subscription.access_until)}`
+                              : `${s.subscription.plan?.name ?? "Plan"} · ${STATE_LABEL[s.subscription.state]?.label ?? s.subscription.state}`}
+                          </Badge>
+                        )}
+                        {s.subscription?.sync_failing && <Badge tone="warning">Sync failing</Badge>}
+                      </InlineStack>
                     ) : (
                       <Text as="span" tone="subdued">
                         —

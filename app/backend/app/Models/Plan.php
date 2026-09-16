@@ -36,4 +36,19 @@ class Plan extends Model
     {
         return $this->hasMany(Subscription::class);
     }
+
+    public function isFree(): bool
+    {
+        return (float) $this->price <= 0;
+    }
+
+    /**
+     * The AppPricingInterval sent to Shopify. The Billing API offers exactly two
+     * recurring intervals — every 30 days and annual — and AdminPlanController
+     * only accepts the two values that map onto them.
+     */
+    public function shopifyInterval(): string
+    {
+        return $this->interval === 'yearly' ? 'ANNUAL' : 'EVERY_30_DAYS';
+    }
 }

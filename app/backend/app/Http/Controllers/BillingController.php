@@ -2,101 +2,102 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\BillingException;
+use App\Jobs\SyncShopBillingJob;
 use App\Models\Plan;
 use App\Models\Shop;
 use App\Models\Subscription;
 use App\Services\ShopifyBilling;
 use App\Services\ShopifyOAuth;
+use App\Services\ShopifyTokenService;
+use App\Support\BillingState;
 use App\Support\CurrentShop;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 
+/**
+ * Merchant billing endpoints. All Shopify work happens in ShopifyBilling; every
+ * response carries the full, freshly read billing state, so the frontend never
+ * patches its own copy after an operation.
+ *
+ * Nothing billing-related is taken from the request except the plan CODE, which
+ * is looked up server-side. Prices, subscription ids and the shop all come from
+ * the database or the verified session token.
+ */
 class BillingController extends Controller
 {
+    /** How old a successful sync may be before the billing page asks Shopify again. */
+    private const PAGE_SYNC_MAX_AGE = 300;
+
     /**
-     * Plans + the shop's current plan, usage limits and subscription lifecycle.
+     * Plans, the shop's current plan and its full billing state.
      *
-     * Reconciles with Shopify first. The local rows are stale after an uninstall
-     * and reinstall — Shopify cancels the charge, and the reinstall arrives by
-     * token exchange, not the OAuth callback — and this is the screen a merchant
-     * opens to find out what they are paying for. A failed lookup changes nothing.
+     * Reconciles with Shopify when the last sync is older than five minutes, or
+     * on ?refresh=1 (at most once every 10 seconds per shop).
      */
     public function index(Request $request, ShopifyBilling $billing): JsonResponse
     {
         $shop = CurrentShop::resolve($request);
-        $billing->sync($shop);
+
+        $force = $request->boolean('refresh') && Cache::add("billing:refresh:{$shop->id}", 1, 10);
+        $synced = $force
+            ? $billing->sync($shop, 'merchant')
+            : $billing->syncIfStale($shop, self::PAGE_SYNC_MAX_AGE, 'merchant');
+
+        if (! $synced) {
+            $this->retryWithFreshToken($request, $shop, $billing);
+        }
 
         return $this->state($shop);
     }
 
-    private function state(Shop $shop): JsonResponse
+    /**
+     * The stored token was revoked (sync drops it on a 401) — typically an
+     * uninstall whose webhook never arrived. This request carries a valid session
+     * token, so exchange it and ask Shopify again rather than show stale billing.
+     */
+    private function retryWithFreshToken(Request $request, Shop $shop, ShopifyBilling $billing): void
     {
-        $shop->forgetPlan();
-        $current = $shop->currentPlan();
+        $sessionToken = $request->bearerToken();
 
-        return response()->json([
+        if (! $sessionToken || $shop->refresh()->access_token) {
+            return;
+        }
+
+        try {
+            app(ShopifyTokenService::class)->exchangeSessionToken($shop, $sessionToken);
+            $billing->sync($shop, 'merchant');
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
+
+    /** The same shape for every billing response. */
+    private function state(Shop $shop, array $extra = []): JsonResponse
+    {
+        $shop->refresh();
+        $shop->forgetPlan();
+
+        $current = $shop->currentPlan();
+        $state = BillingState::for($shop);
+        $activePaid = Subscription::where('shop_id', $shop->id)->where('status', Subscription::ACTIVE)
+            ->with('plan')->orderByDesc('id')->get()->first(fn (Subscription $s) => $s->isPaid());
+
+        return response()->json($extra + [
             'current_plan' => $current ? [
                 'code' => $current->code,
                 'name' => $current->name,
                 'price' => (float) $current->price,
+                'interval' => $current->interval,
                 'limits' => $current->limits,
             ] : null,
             'subscription_status' => $shop->activeSubscription()->first()?->status,
-            'subscription' => self::lifecycle($shop),
-            'plans' => self::formatPlans($current),
+            'subscription' => $state,
+            'history' => BillingState::history($shop),
+            'plans' => self::formatPlans($current, $activePaid),
         ]);
-    }
-
-    /**
-     * Where the shop's paid subscription stands, in the terms a merchant needs:
-     *
-     *   active          paying; renews on current_period_end
-     *   cancelled_grace cancelled (or uninstalled) but paid up — keeps the plan until access_until
-     *   ended           a paid plan existed and has run out; now on the free plan
-     *   free            never had a paid plan
-     */
-    private static function lifecycle(Shop $shop): array
-    {
-        $entitling = $shop->entitlingSubscription();
-
-        $subject = match (true) {
-            $entitling !== null && $entitling->isPaid() => $entitling,
-            // The most recent paid plan that actually ran. Declined charges never
-            // started, so they are not "a subscription you had".
-            default => $shop->subscriptions()
-                ->with('plan')
-                ->whereNotNull('started_at')
-                ->whereIn('status', ['cancelled', 'expired', 'frozen'])
-                ->orderByDesc('id')
-                ->get()
-                ->first(fn (Subscription $s) => $s->isPaid()),
-        };
-
-        $state = match (true) {
-            $subject === null => 'free',
-            $subject->status === 'active' => 'active',
-            $subject->inPaidGracePeriod() => 'cancelled_grace',
-            default => 'ended',
-        };
-
-        return [
-            'state' => $state,
-            'status' => $subject?->status,
-            'plan' => $subject?->plan ? [
-                'code' => $subject->plan->code,
-                'name' => $subject->plan->name,
-                'price' => (float) $subject->plan->price,
-            ] : null,
-            'started_at' => $subject?->started_at?->toIso8601String(),
-            'current_period_end' => $subject?->current_period_end?->toIso8601String(),
-            'cancelled_at' => $subject?->cancelled_at?->toIso8601String(),
-            'cancellation_reason' => $subject?->cancellation_reason,
-            'access_until' => $state === 'cancelled_grace' || $state === 'ended'
-                ? $subject->ends_at?->toIso8601String()
-                : null,
-            'days_remaining' => $state === 'cancelled_grace' ? $subject->daysRemaining() : 0,
-        ];
     }
 
     /**
@@ -107,10 +108,10 @@ class BillingController extends Controller
      */
     public function publicPlans(): JsonResponse
     {
-        return response()->json(['plans' => self::formatPlans(null)]);
+        return response()->json(['plans' => self::formatPlans(null, null)]);
     }
 
-    private static function formatPlans(?Plan $current)
+    private static function formatPlans(?Plan $current, ?Subscription $activePaid)
     {
         return Plan::where('active', true)->orderBy('price')->get()
             ->map(fn (Plan $p) => [
@@ -120,16 +121,22 @@ class BillingController extends Controller
                 'interval' => $p->interval,
                 'limits' => $p->limits,
                 'is_current' => $current && $p->id === $current->id,
+                // What choosing this plan would do, per Shopify's replacement rules.
+                'change' => $current === null && $activePaid === null ? null : ShopifyBilling::changePreview($activePaid, $p),
             ]);
     }
 
     /** Begin a plan change. Returns a Shopify confirmation URL for paid plans. */
     public function subscribe(Request $request, ShopifyBilling $billing): JsonResponse
     {
-        $data = $request->validate(['plan' => ['required', 'string']]);
+        $data = $request->validate(['plan' => ['required', 'string', 'max:64']]);
 
         $shop = CurrentShop::resolve($request);
-        $plan = Plan::where('code', $data['plan'])->where('active', true)->firstOrFail();
+        $plan = Plan::where('code', $data['plan'])->where('active', true)->first();
+
+        if (! $plan) {
+            return response()->json(['error' => 'That plan is not available.', 'reason' => 'invalid_plan'], 422);
+        }
 
         // Enterprise is negotiated and invoiced off-platform. Sending the merchant
         // to a Shopify charge screen for it would bill them for a subscription
@@ -138,23 +145,30 @@ class BillingController extends Controller
             return response()->json([
                 'error' => "The {$plan->name} plan is arranged with our team rather than through Shopify billing. "
                     .'Contact support and we will set it up for you.',
+                'reason' => 'contact_only',
                 'contact_only' => true,
             ], 422);
         }
 
         try {
-            $confirmationUrl = $billing->subscribe($shop, $plan);
-        } catch (\Throwable $e) {
-            return response()->json(['error' => $e->getMessage()], 422);
+            $result = $billing->subscribe($shop, $plan, 'merchant');
+        } catch (BillingException $e) {
+            return response()->json($e->toResponseArray(), $e->httpStatus);
         }
 
-        return response()->json([
-            'confirmation_url' => $confirmationUrl,   // null => free plan, applied immediately
+        return $this->state($shop, [
+            'result' => $result['result'],
+            'confirmation_url' => $result['confirmation_url'],   // null => nothing to approve
+            'reused' => $result['reused'],
             'plan' => $plan->code,
         ]);
     }
 
-    /** Shopify redirects here after the merchant approves (or declines). */
+    /**
+     * Shopify returns the merchant here after they APPROVE a charge (a decline
+     * returns them to the Shopify admin instead). The URL is signed; an unsigned
+     * or forged one only queues a reconcile, which reads Shopify's own state.
+     */
     public function callback(Request $request, ShopifyBilling $billing): RedirectResponse
     {
         $shopDomain = (string) $request->query('shop');
@@ -163,32 +177,50 @@ class BillingController extends Controller
         abort_unless(ShopifyOAuth::isValidShopDomain($shopDomain), 400, 'Invalid shop domain');
 
         $shop = Shop::where('shopify_domain', $shopDomain)->firstOrFail();
-        $plan = Plan::where('code', $planCode)->firstOrFail();
+        $plan = Plan::where('code', $planCode)->first();
 
-        // Shopify appends charge_id — the charge the merchant was actually shown.
-        $ok = $billing->activate($shop, $plan, (string) $request->query('charge_id') ?: null);
+        $signed = $plan && hash_equals(
+            ShopifyBilling::returnSignature($shopDomain, $planCode),
+            (string) $request->query('sig'),
+        );
+
+        if ($signed) {
+            // Shopify appends charge_id — the charge the merchant was actually shown.
+            $outcome = $billing->activate($shop, $plan, (string) $request->query('charge_id') ?: null);
+        } else {
+            SyncShopBillingJob::dispatch($shop->id, 'callback');
+            $outcome = 'processing';
+        }
+
+        $billingParam = match ($outcome) {
+            'active' => 'success',
+            'scheduled' => 'scheduled',
+            'declined' => 'declined',
+            default => 'processing',
+        };
 
         $handle = preg_replace('/\.myshopify\.com$/', '', $shopDomain);
         $apiKey = ShopifyOAuth::apiKey();
 
         // Back into the embedded app, flagging the outcome for the UI.
-        return redirect()->away(
-            "https://admin.shopify.com/store/{$handle}/apps/{$apiKey}"
-            . '?billing=' . ($ok ? 'success' : 'declined')
-        );
+        return redirect()->away("https://admin.shopify.com/store/{$handle}/apps/{$apiKey}?billing={$billingParam}");
     }
 
-    /** Cancel the paid subscription and fall back to the free plan. */
+    /**
+     * Cancel the paid subscription on Shopify. Depending on proration it ends now
+     * or stays available until the end of the period already paid for — the
+     * response describes which.
+     */
     public function cancel(Request $request, ShopifyBilling $billing): JsonResponse
     {
         $shop = CurrentShop::resolve($request);
 
         try {
-            $billing->cancel($shop);
-        } catch (\RuntimeException $e) {
-            return response()->json(['error' => $e->getMessage()], 422);
+            $billing->cancel($shop, 'merchant');
+        } catch (BillingException $e) {
+            return response()->json($e->toResponseArray(), $e->httpStatus);
         }
 
-        return $this->state($shop);
+        return $this->state($shop, ['result' => 'cancelled']);
     }
 }

@@ -5,18 +5,17 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * What a subscription's life looked like, not just its latest status.
+ * What happened to a subscription, not just its latest status.
  *
- * Shopify returns currentPeriodEnd as NULL once a subscription is no longer
- * active, and an uninstall revokes the token before the app can ask. So the date
- * a merchant has paid up to must be captured WHILE the subscription is active —
- * afterwards nobody can tell us. Without it a reinstall could only say "Free",
- * which is what App Store review 1.2.2 rejected: the app did not reflect that a
- * paid plan had been cancelled, nor how long the merchant still had it for.
+ * A cancelled row is kept with why and when it ended, so a reinstalled store can
+ * be told "your Basic subscription was cancelled when the app was uninstalled"
+ * instead of the plan silently vanishing (App Store review 1.2.2).
+ * current_period_end is the renewal date, captured while the charge is active —
+ * Shopify returns it as null once a charge is inactive.
  *
- * ends_at keeps its meaning as "when the plan stops granting access". For a
- * cancelled paid plan that is now the end of the paid period, not the moment of
- * cancellation — cancelled_at records the moment.
+ * Comment-only edit after the first deploy: this migration briefly described a
+ * paid grace period, which was removed. Cancellation is immediate; ends_at is the
+ * moment the subscription stopped granting access.
  */
 return new class extends Migration
 {

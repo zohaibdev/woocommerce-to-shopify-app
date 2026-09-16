@@ -184,7 +184,7 @@ GET  /api/shop
 GET  /api/woocommerce/connection            stored connection, no network call
 POST /api/woocommerce/connect | test
 GET  /api/woocommerce/preview               counts + plan verdicts + estimate
-GET|POST /api/billing, /api/billing/subscribe, /api/billing/cancel
+GET|POST /api/billing (?refresh=1), /api/billing/subscribe, /api/billing/cancel   (subscribe/cancel throttled)
 GET  /api/content
 GET|POST /api/support/tickets, /api/support/tickets/{id}/reply
 
@@ -207,6 +207,7 @@ GET  /api/admin/overview
 POST /api/admin/queue/run | queue/retry-failed
 GET  /api/admin/stores, /stores/{id}
 POST /api/admin/stores/{id}/reset-entity    support tool: resync | forget
+POST /api/admin/stores/{id}/billing/sync | billing/cancel   (cancel: typed domain + reason, cancels ON Shopify)
 GET|POST|PATCH|DELETE /api/admin/plans...
 GET  /api/admin/migrations
 GET  /api/admin/migrations/{id}/debug       developer diagnostics (JSON)
@@ -243,6 +244,7 @@ GET|POST|PATCH|DELETE /api/admin/content...
 | `migration_files` | `id` | `shop_id` | Source-URL hash → Shopify CDN URL, for description-image re-hosting |
 | `app_settings` | `id` | — | One **encrypted** JSON blob per key (`mail`, `branding`) |
 | `admin_users`, `plans`, `subscriptions`, `support_tickets`, `ticket_replies`, `dashboard_contents` | | | Admin panel, billing, support |
+| `billing_events` | `subscriptions` → `shop_id`, `previous_subscription_id`, unique `shopify_charge_id`, unique generated `active_shop_id` | | Billing history + audit log; the unique generated column lets the database refuse a second active subscription per shop |
 
 > The runs table is **`store_migrations`**, not `migrations` — that name belongs to
 > Laravel's own schema-migration table.

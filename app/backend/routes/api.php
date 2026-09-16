@@ -56,8 +56,10 @@ Route::middleware('shopify.session')->group(function () {
 
     // Admin-managed content shown in the merchant dashboard + support tickets.
     Route::get('/billing', [BillingController::class, 'index']);
-    Route::post('/billing/subscribe', [BillingController::class, 'subscribe']);
-    Route::post('/billing/cancel', [BillingController::class, 'cancel']);
+    // Throttled: each call can reach Shopify. Repeat clicks are also made harmless
+    // server-side (per-shop lock + checkout reuse) — this just bounds the load.
+    Route::post('/billing/subscribe', [BillingController::class, 'subscribe'])->middleware('throttle:10,1');
+    Route::post('/billing/cancel', [BillingController::class, 'cancel'])->middleware('throttle:5,1');
 
     Route::get('/content', [DashboardContentController::class, 'index']);
     Route::post('/support/tickets', [DashboardContentController::class, 'createTicket']);
@@ -96,6 +98,9 @@ Route::prefix('admin')->group(function () {
         Route::get('/stores/{id}', [AdminStoreController::class, 'show']);
         // Support tool: let one entity type be migrated again for one store.
         Route::post('/stores/{id}/reset-entity', [AdminStoreController::class, 'resetEntity']);
+        // Billing: reconcile with Shopify, or cancel ON Shopify (confirmed + reasoned).
+        Route::post('/stores/{id}/billing/sync', [AdminStoreController::class, 'syncBilling'])->middleware('throttle:20,1');
+        Route::post('/stores/{id}/billing/cancel', [AdminStoreController::class, 'cancelBilling'])->middleware('throttle:10,1');
         Route::get('/plans', [AdminPlanController::class, 'index']);
         Route::post('/plans', [AdminPlanController::class, 'store']);
         Route::patch('/plans/{id}', [AdminPlanController::class, 'update']);

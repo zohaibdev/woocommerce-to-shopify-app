@@ -129,6 +129,9 @@ class ShopifyOAuthController extends Controller
         $scopes = $res->json('scope');
         abort_unless($accessToken, 502, 'No access token returned');
 
+        // Checked before the upsert below clears it.
+        $wasUninstalled = Shop::where('shopify_domain', $shop)->whereNotNull('uninstalled_at')->exists();
+
         $storeShop = Shop::updateOrCreate(
             ['shopify_domain' => $shop],
             [
@@ -147,6 +150,16 @@ class ShopifyOAuthController extends Controller
         );
 
         $this->registerWebhooks($storeShop);
+
+        if ($wasUninstalled) {
+            // Same as the token-exchange path: a reinstall starts from the
+            // subscriptions Shopify actually has, never the previous install's.
+            try {
+                app(\App\Services\ShopifyBilling::class)->handleReinstall($storeShop);
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
 
         // Land the merchant in the EMBEDDED app inside the Shopify admin.
         $apiKey = ShopifyOAuth::apiKey();

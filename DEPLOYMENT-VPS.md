@@ -431,10 +431,11 @@ sudo crontab -u www-data -e
 ```cron
 */5 * * * * cd /var/www/store-shift/app/backend && php artisan migration:watchdog >> /var/log/store-shift-watchdog.log 2>&1
 0 3 * * *   cd /var/www/store-shift/app/backend && php artisan migration:prune >> /var/log/store-shift-prune.log 2>&1
+0 * * * *   cd /var/www/store-shift/app/backend && php artisan billing:sync >> /var/log/store-shift-billing.log 2>&1
 ```
 
 ```bash
-sudo touch /var/log/store-shift-watchdog.log /var/log/store-shift-prune.log
+sudo touch /var/log/store-shift-watchdog.log /var/log/store-shift-prune.log /var/log/store-shift-billing.log
 sudo chown www-data:www-data /var/log/store-shift-*.log
 ```
 

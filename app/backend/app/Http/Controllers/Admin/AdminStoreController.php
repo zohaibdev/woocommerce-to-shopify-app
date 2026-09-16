@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Exceptions\BillingException;
 use App\Http\Controllers\Controller;
 use App\Migration\MigratorRegistry;
 use App\Models\MigrationItem;
@@ -9,6 +10,8 @@ use App\Models\MigrationLog;
 use App\Models\Shop;
 use App\Models\StoreMigration;
 use App\Models\Subscription;
+use App\Services\ShopifyBilling;
+use App\Support\BillingState;
 use App\Support\QueueKeeper;
 use App\Support\QueueMaintenance;
 use Illuminate\Http\JsonResponse;
@@ -132,7 +135,12 @@ class AdminStoreController extends Controller
             'migrations_running' => StoreMigration::whereIn('status', StoreMigration::ACTIVE_STATES)->count(),
             'failed_items' => MigrationItem::where('status', 'failed')->count(),
             'open_tickets' => \App\Models\SupportTicket::whereIn('status', ['open', 'pending'])->count(),
-            'active_subscriptions' => Subscription::where('status', 'active')->count(),
+            // Paying subscriptions only — free-plan rows are not subscriptions anyone pays for.
+            'active_subscriptions' => Subscription::where('status', Subscription::ACTIVE)
+                ->where(fn ($q) => $q->where('price', '>', 0)
+                    ->orWhere(fn ($q) => $q->whereNull('price')->whereHas('plan', fn ($p) => $p->where('price', '>', 0))))
+                ->count(),
+            'frozen_subscriptions' => Subscription::where('status', Subscription::FROZEN)->count(),
         ]);
     }
 
@@ -159,8 +167,17 @@ class AdminStoreController extends Controller
     }
 
     /** Full detail for one store: plan, migrations, recent errors. */
-    public function show(int $id): JsonResponse
+    public function show(int $id, ShopifyBilling $billing): JsonResponse
     {
+        $shop = Shop::findOrFail($id);
+
+        // Reconcile with Shopify before showing billing (at most once a minute),
+        // so the admin panel and the merchant's Pricing page read the same state.
+        // Only for an installed store with a token; a failed lookup changes nothing.
+        if ($shop->uninstalled_at === null && $shop->access_token) {
+            $billing->syncIfStale($shop, 60, 'admin');
+        }
+
         $shop = Shop::with(['activeSubscription.plan', 'woocommerceConnection'])->findOrFail($id);
 
         $migrations = StoreMigration::where('shop_id', $shop->id)
@@ -183,14 +200,9 @@ class AdminStoreController extends Controller
             'store' => $this->present($shop),
             'entities' => $this->entityBreakdown($shop),
             'migrations' => $migrations,
-            'subscriptions' => $shop->subscriptions()->with('plan')->latest()->get()
-                ->map(fn ($s) => [
-                    'id' => $s->id,
-                    'plan' => $s->plan?->name,
-                    'status' => $s->status,
-                    'started_at' => $s->started_at,
-                    'ends_at' => $s->ends_at,
-                ]),
+            'billing' => BillingState::for($shop, forAdmin: true),
+            'subscriptions' => BillingState::subscriptionRows($shop),
+            'billing_events' => BillingState::history($shop, forAdmin: true, limit: 100),
             'recent_errors' => MigrationLog::whereIn('migration_id', StoreMigration::where('shop_id', $shop->id)->pluck('id'))
                 ->where('level', 'error')->latest('created_at')->limit(20)->get(),
         ]);
@@ -327,6 +339,83 @@ class AdminStoreController extends Controller
         ]);
     }
 
+    /** Reconcile one store's billing with Shopify now. */
+    public function syncBilling(int $id, ShopifyBilling $billing): JsonResponse
+    {
+        $shop = Shop::findOrFail($id);
+
+        if ($shop->uninstalled_at !== null || ! $shop->access_token) {
+            return response()->json([
+                'error' => 'This store has uninstalled the app, so there is no access to its Shopify billing. Shopify cancelled its subscription on uninstall.',
+                'billing' => BillingState::for($shop, forAdmin: true),
+            ], 422);
+        }
+
+        $ok = $billing->sync($shop, 'admin');
+
+        return response()->json([
+            'synced' => $ok,
+            'message' => $ok ? 'Billing reconciled with Shopify.' : 'Shopify could not be reached. Nothing was changed — see the billing events for the error.',
+            'billing' => BillingState::for($shop->refresh(), forAdmin: true),
+            'subscriptions' => BillingState::subscriptionRows($shop),
+            'billing_events' => BillingState::history($shop, forAdmin: true, limit: 100),
+        ], $ok ? 200 : 502);
+    }
+
+    /**
+     * Cancel a store's subscription ON SHOPIFY (appSubscriptionCancel). Never a
+     * local-only change: if Shopify can't confirm, nothing is recorded as cancelled.
+     * Requires the store's domain typed back and a reason, both server-checked.
+     */
+    public function cancelBilling(Request $request, int $id, ShopifyBilling $billing): JsonResponse
+    {
+        $shop = Shop::findOrFail($id);
+
+        $data = $request->validate([
+            'confirm_domain' => ['required', 'string'],
+            'reason' => ['required', 'string', 'min:5', 'max:500'],
+            'prorate' => ['required', 'boolean'],
+        ]);
+
+        if (! hash_equals($shop->shopify_domain, trim($data['confirm_domain']))) {
+            return response()->json(['error' => 'The store domain you typed does not match. Nothing was cancelled.'], 422);
+        }
+
+        if ($shop->uninstalled_at !== null || ! $shop->access_token) {
+            return response()->json(['error' => 'This store has uninstalled the app; Shopify already cancelled its subscription.'], 422);
+        }
+
+        try {
+            $billing->cancel($shop, 'admin', (bool) $data['prorate'], $data['reason'].' (by '.($request->attributes->get('admin')?->email ?? 'admin').')');
+        } catch (BillingException $e) {
+            return response()->json($e->toResponseArray(), $e->httpStatus);
+        }
+
+        return response()->json([
+            'message' => 'Subscription cancelled on Shopify.',
+            'billing' => BillingState::for($shop->refresh(), forAdmin: true),
+            'subscriptions' => BillingState::subscriptionRows($shop),
+            'billing_events' => BillingState::history($shop, forAdmin: true, limit: 100),
+        ]);
+    }
+
+    /** Compact billing summary for the stores list. */
+    private static function billingSummary(Shop $s): array
+    {
+        $state = BillingState::for($s);
+
+        return [
+            'state' => $state['state'],
+            'plan' => $state['plan'],
+            'renews_at' => $state['renews_at'],
+            'access_until' => $state['access_until'],
+            'cancelled_at' => $state['cancelled_at'],
+            'cancellation_reason' => $state['cancellation_reason'],
+            'pending_change' => $state['pending_change'] !== null,
+            'sync_failing' => $state['sync']['failing'],
+        ];
+    }
+
     private function present(Shop $s): array
     {
         $latest = StoreMigration::where('shop_id', $s->id)->latest()->first();
@@ -343,8 +432,12 @@ class AdminStoreController extends Controller
                 'store_url' => $s->woocommerceConnection->store_url,
                 'status' => $s->woocommerceConnection->status,
             ] : null,
-            'plan' => $s->activeSubscription?->plan?->name,
-            'plan_status' => $s->activeSubscription?->status,
+            // The plan the shop is ACTUALLY on — Shop::currentPlan(), the same call
+            // the merchant app makes. Reading only the active row showed "No
+            // subscription" for a shop the app correctly placed on Starter.
+            'plan' => $s->currentPlan()?->name,
+            'plan_status' => $s->entitlement()['basis'] === 'free' ? 'free' : ($s->entitlement()['subscription']?->status ?? 'free'),
+            'subscription' => self::billingSummary($s),
             'migrations_count' => StoreMigration::where('shop_id', $s->id)->count(),
             'last_migration' => $latest ? [
                 'id' => $latest->id,

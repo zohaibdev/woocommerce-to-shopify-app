@@ -23,3 +23,8 @@ Schedule::command('queue:keepalive')->everyMinute()->withoutOverlapping();
 // Safety net for stalled migrations. Shared hosting without a scheduler cron
 // should call `php artisan migration:watchdog` directly instead (see DEPLOYMENT.md).
 Schedule::command('migration:watchdog')->everyFiveMinutes()->withoutOverlapping();
+
+// Billing drift check. Shopify sends no webhook when a subscription simply
+// renews, so period ends, expiries and any missed cancellation are picked up
+// here. Only shops that need it are queued — see SyncBilling.
+Schedule::command('billing:sync')->hourly()->withoutOverlapping();

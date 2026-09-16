@@ -88,7 +88,10 @@ function errorMessage(status: number, body: string): string {
       // key was revoked" — was thrown away and shown as "Request failed (422)".
       parsed?.error;
 
-    if (typeof message === "string" && message.trim()) return message;
+    // Billing failures carry a reference that support can find in the logs.
+    if (typeof message === "string" && message.trim()) {
+      return typeof parsed?.reference === "string" ? `${message} (Reference: ${parsed.reference.slice(0, 8)})` : message;
+    }
   } catch {
     /* not JSON — fall through */
   }
@@ -354,31 +357,111 @@ export interface BillingPlan {
   is_current: boolean;
 }
 
+/** Shopify's two recurring intervals (AppPricingInterval). */
+export type BillingInterval = "EVERY_30_DAYS" | "ANNUAL";
+
+export type BillingState = "active" | "frozen" | "unknown" | "cancelled" | "pending" | "ended" | "free";
+
 /**
- * Where the shop's paid subscription stands.
+ * The shop's billing, exactly as the server reconciled it with Shopify. The admin
+ * panel renders the same object. Every date is one Shopify reported or an event
+ * that was recorded — a date Shopify doesn't provide is null, never estimated.
  *
- * - `active`          paying; renews on `current_period_end`
- * - `cancelled_grace` cancelled or uninstalled, but paid up — keeps the plan until `access_until`
- * - `ended`           a paid plan ran out; the shop is on the free plan now
- * - `free`            never had a paid plan
+ * - `active`    paying; renews on `renews_at`
+ * - `frozen`    Shopify put it on hold for an unpaid Shopify bill; paid features paused
+ * - `unknown`   renewal couldn't be confirmed with Shopify for a week; paid features paused
+ * - `cancelled` cancelled and won't renew, but already paid for — plan kept until `access_until`
+ * - `pending`   first subscription waiting for approval in Shopify
+ * - `ended`     a paid plan has ended; on the free plan
+ * - `free`      never had a paid plan
  */
 export interface SubscriptionLifecycle {
-  state: "active" | "cancelled_grace" | "ended" | "free";
+  state: BillingState;
   status: string | null;
+  shopify_status: string | null;
   plan: { code: string; name: string; price: number } | null;
+  price: number | null;
+  currency: string | null;
+  interval: BillingInterval | null;
+  test: boolean;
+  trial_days: number | null;
+  created_at: string | null;
   started_at: string | null;
   current_period_end: string | null;
+  renews_at: string | null;
   cancelled_at: string | null;
-  cancellation_reason: "uninstalled" | "merchant" | "replaced" | "declined" | "shopify" | "expired" | "frozen" | null;
+  cancellation_reason: string | null;
   access_until: string | null;
-  days_remaining: number;
+  ended_at: string | null;
+  entitled_plan: { code: string; name: string; price: number } | null;
+  previous: {
+    plan: { code: string; name: string; price: number } | null;
+    status: string;
+    ended_at: string | null;
+    reason: string | null;
+  } | null;
+  pending_change: {
+    plan: { code: string; name: string; price: number } | null;
+    price: number;
+    interval: BillingInterval | null;
+    created_at: string | null;
+    /** awaiting_approval: not approved yet. processing: approved, Shopify hasn't activated it. scheduled: deferred to the next cycle. */
+    status: "awaiting_approval" | "processing" | "scheduled";
+    effective_at: string | null;
+    expires_at: string | null;
+  } | null;
+  sync: { last_synced_at: string | null; failing: boolean };
+  actions: {
+    can_cancel: boolean;
+    can_change_plan: boolean;
+    can_resubscribe: boolean;
+    can_continue_checkout: boolean;
+  };
+  /** What "Cancel subscription" would do right now. access_until null => ends immediately. */
+  cancellation: { prorate: boolean; access_until: string | null };
+}
+
+export interface BillingHistoryEntry {
+  id: number;
+  event: string;
+  plan?: string;
+  status?: string;
+  message?: string;
+  occurred_at: string;
+  access_until?: string;
+  next_billing?: string;
+}
+
+export interface PlanChangePreview {
+  type: "new" | "upgrade" | "downgrade" | "switch" | "current" | "cancel" | "current_free";
+  timing: "on_approval" | "next_billing_cycle" | "on_cancel" | null;
+  proration: "charge_difference" | "credit" | "none";
+  effective_at: string | null;
+}
+
+export interface BillingPlan {
+  code: string;
+  name: string;
+  price: number;
+  interval: string;
+  limits: PlanLimits;
+  is_current: boolean;
+  change: PlanChangePreview | null;
 }
 
 export interface BillingInfo {
-  current_plan: { code: string; name: string; price: number; limits: PlanLimits } | null;
+  current_plan: { code: string; name: string; price: number; interval: string; limits: PlanLimits } | null;
   subscription_status: string | null;
   subscription: SubscriptionLifecycle;
+  history: BillingHistoryEntry[];
   plans: BillingPlan[];
+}
+
+export interface SubscribeResult extends BillingInfo {
+  result: "confirmation_required" | "cancelled" | "noop";
+  confirmation_url: string | null;
+  reused: boolean;
+  plan: string;
 }
 
 export interface PageMeta {
@@ -490,15 +573,17 @@ export const api = {
     }),
 
   // --- Billing ---
-  billing: () => request<BillingInfo>("/billing", { cache: "no-store" }),
+  /** refresh: ask Shopify now instead of using a recent sync (the server rate-limits it). */
+  billing: (refresh = false) =>
+    request<BillingInfo>(`/billing${refresh ? "?refresh=1" : ""}`, { cache: "no-store" }),
 
   subscribe: (plan: string) =>
-    request<{ confirmation_url: string | null; plan: string }>("/billing/subscribe", {
+    request<SubscribeResult>("/billing/subscribe", {
       method: "POST",
       body: JSON.stringify({ plan }),
     }),
 
-  cancelPlan: () => request<BillingInfo>("/billing/cancel", { method: "POST" }),
+  cancelPlan: () => request<BillingInfo & { result: string }>("/billing/cancel", { method: "POST" }),
 
   // Admin-managed dashboard content (videos, links, resources).
   // no-store: admin edits must show up on the next load, never from cache.

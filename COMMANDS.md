@@ -30,6 +30,8 @@ actually use.
 | See why a migration is slow | Admin → Migrations → **Developer log** |
 | Restart workers after a deploy | `sudo supervisorctl restart store-shift-worker:*` |
 | Un-stick a frozen migration | `php artisan migration:watchdog` |
+| Reconcile billing with Shopify (drifted shops, queued) | `php artisan billing:sync` |
+| Reconcile one shop's billing now | `php artisan billing:sync --shop=store.myshopify.com` |
 | Check everything is running (VPS) | `sudo ss-health` |
 
 ---
@@ -265,10 +267,11 @@ sudo crontab -u www-data -e
 ```cron
 */5 * * * * cd /var/www/store-shift/app/backend && php artisan migration:watchdog >> /var/log/store-shift-watchdog.log 2>&1
 0 3 * * *   cd /var/www/store-shift/app/backend && php artisan migration:prune    >> /var/log/store-shift-prune.log    2>&1
+0 * * * *   cd /var/www/store-shift/app/backend && php artisan billing:sync       >> /var/log/store-shift-billing.log  2>&1
 ```
 
 ```bash
-sudo touch /var/log/store-shift-watchdog.log /var/log/store-shift-prune.log
+sudo touch /var/log/store-shift-watchdog.log /var/log/store-shift-prune.log /var/log/store-shift-billing.log
 sudo chown www-data:www-data /var/log/store-shift-*.log
 ```
 
@@ -276,6 +279,7 @@ sudo chown www-data:www-data /var/log/store-shift-*.log
 
 ```cron
 * * * * * /bin/bash ~/queue-workers.sh >> ~/worker-cron.log 2>&1
+0 * * * * cd ~/public_html/app/backend && php artisan billing:sync >> ~/billing-sync.log 2>&1
 ```
 Keep `queue-workers.sh` in `$HOME`, **not** under `public_html` — anything in the web
 root is downloadable and that file names your paths and process layout.

@@ -16,7 +16,9 @@ application_url = "https://shopshift.net/app"
 embedded = true
 
 [webhooks]
-api_version = "2025-10"
+# Payload version for webhooks. 2025-10 stops being served on Oct 16, 2026; keep
+# this on a supported version (https://shopify.dev/docs/api/usage/versioning).
+api_version = "2026-07"
 
   # The three mandatory compliance webhooks. Shopify requires all of them before
   # an app can be listed, and they cannot be registered through the API — they

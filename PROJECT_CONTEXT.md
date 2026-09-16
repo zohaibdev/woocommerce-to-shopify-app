@@ -233,18 +233,38 @@ table** and are editable from `/app/admin/plans` — no deploy needed. `AdminSee
 *creates* missing plans (it used to overwrite, which reset admin-set prices on every
 deploy); use `PLAN_SEED_OVERWRITE=true` to deliberately push code values out.
 
-**Shopify is the source of truth for billing.** `ShopifyBilling::sync()` reconciles local
-subscriptions against Shopify whenever billing is shown and on `app_subscriptions/update`.
-Shopify cancels every charge on uninstall, and a reinstall arrives through token exchange —
-not the OAuth callback — so without the sync a reinstall showed the cancelled plan as
-current (App Store rejection 1.2.2).
+**Shopify is the source of truth; the `subscriptions` table is this app's copy plus
+history.** All Shopify billing calls live in `App\Services\ShopifyBilling` (Billing API /
+Manual Pricing, Admin GraphQL). Verified behaviour it relies on is written at the top of
+that class.
 
-- A cancelled **paid** plan keeps access until the end of the period already paid for
-  (`subscriptions.ends_at`). Shopify reports `currentPeriodEnd` as null once a charge is
-  inactive, so it is stored while active.
-- Switching to Free cancels the Shopify charge first; re-approving a plan during its grace
-  period passes `trialDays` so those days are not billed twice.
-- Home and Pricing show `SubscriptionStatusBanner` for a cancelled or recently ended plan.
+- **One entitlement rule** — `Shop::entitlement()` / `currentPlan()`: an ACTIVE paid
+  subscription → a cancelled paid one still inside its paid period (`ends_at`) → Starter.
+  Frozen, pending, declined and expired grant nothing; an active one whose renewal hasn't
+  been confirmed for 7 days is treated as unverified. The merchant app, admin panel, plan
+  gating and migrations all read it.
+- **Cancel** (`appSubscriptionCancel`) is immediate on Shopify — the API has no
+  end-of-period cancel and no resume. `SHOPIFY_BILLING_PRORATE_CANCELLATIONS=false`
+  (default): no credit, plan kept until the period ends. `true`: credit, plan ends now.
+  Nothing is recorded as cancelled unless Shopify confirms it.
+- **Uninstall**: Shopify cancels, no credit, merchant may use the rest of the period (Shopify's
+  documented rule). **Reinstall** (token exchange or OAuth) → `handleReinstall()` + sync.
+- **Plan change**: a new subscription (`replacementBehavior: STANDARD`) replaces the old one
+  only when approved; upgrades charge the prorated difference, downgrades credit it;
+  annual → monthly / cheaper annual defer to the next cycle. The plans list carries a
+  `change` preview so the UI says which before sending the merchant to Shopify.
+- **No duplicates**: per-shop cache lock around every billing operation, same-plan checkout
+  reuse, throttled endpoints, and a unique generated column so the DB refuses a second
+  active row.
+- **Sync**: `GET /api/billing` (if older than 5 min, or `?refresh=1`), admin store detail
+  (1 min), `app_subscriptions/update` (payload applied at once, ordered by `updated_at`,
+  de-duplicated by `X-Shopify-Webhook-Id`, then `SyncShopBillingJob`), reinstall, and
+  hourly `billing:sync` for drift-prone shops only. A failed lookup never downgrades.
+- **History/audit**: `billing_events`. `App\Support\BillingState` is the one normalised
+  billing object both UIs render; every date is Shopify-reported or recorded, never estimated.
+- **Return URL is signed** (`sig`); an unsigned callback only queues a reconcile.
+- `activeSubscription` must keep its status filter inside `ofMany()`; chained before
+  `latestOfMany()` it silently hid a live plan behind any newer row.
 
 ## Email System
 

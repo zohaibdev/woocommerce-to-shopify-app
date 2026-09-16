@@ -8,47 +8,87 @@ use App\Services\ShopifyBilling;
 use App\Services\ShopifyOAuth;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 class WebhookController extends Controller
 {
     /**
      * app/uninstalled — clear the shop's token, mark it uninstalled, and record
-     * that Shopify has cancelled its charge.
-     *
-     * Leaving the subscription 'active' here is what let a reinstall show the
-     * cancelled paid plan as the merchant's current one (App Store review 1.2.2).
+     * that Shopify has cancelled its charge. Per Shopify no credit is applied and
+     * the merchant may use the rest of the paid period if they reinstall.
      */
     public function appUninstalled(Request $request, ShopifyBilling $billing): JsonResponse
     {
         $shopDomain = $this->verify($request);
 
-        $shop = Shop::where('shopify_domain', $shopDomain)->first();
+        return $this->once($request, function () use ($shopDomain, $billing, $request) {
+            $shop = Shop::where('shopify_domain', $shopDomain)->first();
 
-        if ($shop) {
-            $shop->forceFill(['access_token' => null, 'uninstalled_at' => now()])->save();
-            $billing->handleUninstall($shop);
+            if ($shop) {
+                $shop->forceFill(['access_token' => null, 'refresh_token' => null, 'uninstalled_at' => now()])->save();
+                $billing->handleUninstall($shop, $this->triggeredAt($request));
+            }
+        });
+    }
+
+    /**
+     * app_subscriptions/update — a subscription's status changed on Shopify
+     * (approved, cancelled, declined, expired, frozen, unfrozen).
+     */
+    public function appSubscriptionsUpdate(Request $request, ShopifyBilling $billing): JsonResponse
+    {
+        $shopDomain = $this->verify($request);
+
+        return $this->once($request, function () use ($shopDomain, $billing, $request) {
+            $shop = Shop::where('shopify_domain', $shopDomain)->first();
+
+            if (! $shop) {
+                Log::warning('billing.webhook_unknown_shop', ['shop' => $shopDomain]);
+
+                return;
+            }
+
+            $billing->handleSubscriptionUpdate($shop, $request->json()->all());
+        });
+    }
+
+    /**
+     * Process a delivery at most once. Shopify retries until it gets a 2xx and
+     * may deliver the same event more than once; X-Shopify-Webhook-Id identifies
+     * a delivery. The id is remembered only AFTER processing succeeds, so a
+     * delivery that failed here is processed again when Shopify retries it. The
+     * handlers are idempotent regardless — this just avoids repeating work.
+     */
+    private function once(Request $request, callable $process): JsonResponse
+    {
+        $deliveryId = (string) $request->header('X-Shopify-Webhook-Id');
+        $key = $deliveryId !== '' ? 'shopify:webhook:'.sha1($deliveryId) : null;
+
+        if ($key && Cache::has($key)) {
+            return response()->json(['ok' => true, 'duplicate' => true]);
+        }
+
+        $process();
+
+        if ($key) {
+            Cache::put($key, 1, now()->addDays(2));
         }
 
         return response()->json(['ok' => true]);
     }
 
-    /** app_subscriptions/update — a charge was approved, cancelled, frozen or expired on Shopify's side. */
-    public function appSubscriptionsUpdate(Request $request, ShopifyBilling $billing): JsonResponse
+    /** When Shopify triggered the delivery, if it said. */
+    private function triggeredAt(Request $request): ?Carbon
     {
-        $shopDomain = $this->verify($request);
+        $header = $request->header('X-Shopify-Triggered-At');
 
-        $shop = Shop::where('shopify_domain', $shopDomain)->first();
-
-        if ($shop) {
-            $billing->handleSubscriptionUpdate(
-                $shop,
-                data_get($request->json()->all(), 'app_subscription.admin_graphql_api_id'),
-                data_get($request->json()->all(), 'app_subscription.status'),
-            );
+        try {
+            return $header ? Carbon::parse($header) : null;
+        } catch (\Throwable) {
+            return null;
         }
-
-        return response()->json(['ok' => true]);
     }
 
     /** GDPR: customers/data_request — log the request for the merchant to fulfil. */

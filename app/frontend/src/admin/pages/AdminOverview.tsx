@@ -22,7 +22,8 @@ type CounterKey = {
 const TILES: { key: CounterKey; label: string; to?: string; tone?: "critical" }[] = [
   { key: "stores", label: "Installed stores", to: "/admin/stores" },
   { key: "stores_uninstalled", label: "Uninstalled" },
-  { key: "active_subscriptions", label: "Active subscriptions", to: "/admin/plans" },
+  { key: "active_subscriptions", label: "Paying subscriptions", to: "/admin/stores" },
+  { key: "frozen_subscriptions", label: "Frozen (payment issue)", to: "/admin/stores", tone: "critical" },
   { key: "migrations", label: "Total migrations", to: "/admin/migrations" },
   { key: "migrations_running", label: "Running now", to: "/admin/migrations" },
   { key: "failed_items", label: "Failed items", to: "/admin/errors", tone: "critical" },

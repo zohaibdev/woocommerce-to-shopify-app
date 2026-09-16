@@ -1,6 +1,8 @@
 // Super Admin API client. Uses its own bearer token (localStorage), entirely
 // separate from the merchant app's Shopify session-token auth.
 
+import type { BillingState, SubscriptionLifecycle } from "../api/client";
+
 const BASE =
   (import.meta.env.VITE_API_URL ??
     `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api`) + "/admin";
@@ -117,6 +119,7 @@ export interface Overview {
   failed_items: number;
   open_tickets: number;
   active_subscriptions: number;
+  frozen_subscriptions: number;
 }
 
 /** What one shop currently holds for one entity type — what a reset acts on. */
@@ -139,6 +142,72 @@ export interface EntityResetResult {
   message: string;
 }
 
+/** Compact billing summary for the stores list. */
+export interface AdminSubscriptionSummary {
+  state: BillingState;
+  plan: { code: string; name: string; price: number } | null;
+  renews_at: string | null;
+  access_until: string | null;
+  cancelled_at: string | null;
+  cancellation_reason: string | null;
+  pending_change: boolean;
+  sync_failing: boolean;
+}
+
+/** The full billing object — the merchant app's, plus fields only support needs. */
+export interface AdminBilling extends SubscriptionLifecycle {
+  admin: {
+    shopify_subscription_id: string | null;
+    shopify_updated_at: string | null;
+    approved_at: string | null;
+    local_subscription_id: number | null;
+    entitlement_basis: "active" | "paid_through" | "free";
+    open_checkouts: number;
+    last_sync_failure_at: string | null;
+  };
+}
+
+export interface AdminSubscriptionRow {
+  id: number;
+  plan: string | null;
+  plan_code: string | null;
+  status: string;
+  shopify_status: string | null;
+  shopify_subscription_id: string | null;
+  price: number | null;
+  currency: string | null;
+  interval: string | null;
+  test: boolean;
+  created_at: string | null;
+  approved_at: string | null;
+  started_at: string | null;
+  current_period_end: string | null;
+  cancelled_at: string | null;
+  cancellation_reason: string | null;
+  ends_at: string | null;
+  previous_plan: string | null;
+}
+
+export interface AdminBillingEvent {
+  id: number;
+  event: string;
+  plan?: string;
+  status?: string;
+  message?: string;
+  occurred_at: string;
+  access_until?: string;
+  next_billing?: string;
+  source?: string;
+  shopify_subscription_id?: string;
+  context?: Record<string, unknown>;
+}
+
+export interface AdminBillingPayload {
+  billing: AdminBilling;
+  subscriptions: AdminSubscriptionRow[];
+  billing_events: AdminBillingEvent[];
+}
+
 export interface AdminStore {
   id: number;
   shopify_domain: string;
@@ -148,8 +217,11 @@ export interface AdminStore {
   uninstalled_at: string | null;
   scopes: string | null;
   woocommerce: { store_url: string; status: string } | null;
+  /** The plan the shop is actually on — the same answer the merchant app gives. */
   plan: string | null;
+  /** "active" for a subscription, "free" when on the fallback free plan. */
   plan_status: string | null;
+  subscription: AdminSubscriptionSummary;
   migrations_count: number;
   last_migration: { id: number; status: string; created_at: string } | null;
 }
@@ -322,6 +394,17 @@ export const adminApi = {
       `/stores?page=${page}&search=${encodeURIComponent(search)}`,
     ),
   store: (id: number) => request<any>(`/stores/${id}`),
+
+  /** Reconcile one store's billing with Shopify now. */
+  syncStoreBilling: (id: number) =>
+    request<AdminBillingPayload & { synced: boolean; message: string }>(`/stores/${id}/billing/sync`, { method: "POST" }),
+
+  /** Cancel ON Shopify. The server re-checks the typed domain and requires a reason. */
+  cancelStoreBilling: (id: number, body: { confirm_domain: string; reason: string; prorate: boolean }) =>
+    request<AdminBillingPayload & { message: string }>(`/stores/${id}/billing/cancel`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   // Support tool: let one entity type be migrated again for one store.
   //
