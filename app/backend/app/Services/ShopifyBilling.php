@@ -740,7 +740,7 @@ class ShopifyBilling
             $because = match ($reason) {
                 'uninstalled' => ' when the app was uninstalled',
                 'merchant' => '',
-                'admin' => ' by Shop Shift support',
+                'admin' => ' by Store Shift support',
                 'expired' => '',
                 default => ' on Shopify',
             };
@@ -776,7 +776,7 @@ class ShopifyBilling
         }
 
         BillingEvent::record($shop, 'cancellation_requested', $source, $sub,
-            ($source === 'admin' ? 'Cancellation requested by Shop Shift support' : 'Cancellation requested').($note ? ": {$note}" : '.'),
+            ($source === 'admin' ? 'Cancellation requested by Store Shift support' : 'Cancellation requested').($note ? ": {$note}" : '.'),
             ['prorate' => $prorate]);
 
         $reference = (string) Str::uuid();

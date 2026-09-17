@@ -1,4 +1,4 @@
-# Shop Shift — Shopify App Store Listing Content
+# Store Shift — Shopify App Store Listing Content
 
 Copy-paste ready. Character counts are shown as `(n/limit)` so you can see the
 headroom before Shopify truncates anything.
@@ -9,14 +9,14 @@ headroom before Shopify truncates anything.
 
 ### App name (30 max)
 ```
-Shop Shift
+Store Shift
 ```
-`(11/30)`
+`(19/30)`
 
 **Backup options if taken:**
 ```
-Shop Shift ‑ Woo Migration
-Shop Shift Migration
+Store Shift ‑ Woo Import
+Shift Shop: WooCommerce Migrator
 ```
 
 ### App icon
@@ -67,7 +67,7 @@ Bring your whole WooCommerce store to Shopify — catalog, customers, orders and
 > What it does and who it's for. Plain language, no marketing fluff.
 
 ```
-Shop Shift moves your WooCommerce store into Shopify — no spreadsheets.
+Store Shift moves your WooCommerce store into Shopify — no spreadsheets.
 
 Connect your API keys, pick what to migrate, and it runs in the background — close the tab and come back later.
 
@@ -132,9 +132,9 @@ Minimum 3, 1600 × 900 px, taken inside the Shopify admin (embedded).
 
 ### Onboarding / integration
 ```
-1. Install Shop Shift from the Shopify App Store.
+1. Install Store Shift from the Shopify App Store.
 2. In WooCommerce, go to Settings → Advanced → REST API and create a key with Read access.
-3. Paste your store URL, consumer key and consumer secret into Shop Shift, then click Test connection.
+3. Paste your store URL, consumer key and consumer secret into Store Shift, then click Test connection.
 4. Choose the data you want to migrate and start. Progress updates live, and you can close the tab.
 ```
 
@@ -261,7 +261,7 @@ data import
 
 ### SEO title (60 max)
 ```
-Shop Shift — WooCommerce to Shopify Migration
+Store Shift — WooCommerce to Shopify Migration
 ```
 `(46/60)`
 
@@ -324,7 +324,7 @@ Google Tag Manager:   (leave blank)
 
 ### Test store / login instructions
 ```
-Shop Shift needs a WooCommerce store as the data source. We have prepared a test
+Store Shift needs a WooCommerce store as the data source. We have prepared a test
 store with sample products, variants, images, categories, customers, orders,
 coupons and blog posts.
 
@@ -348,7 +348,9 @@ Steps to test:
 7. Optional: start a second migration with Coupons and Blogs to see them arrive
    under Shopify Discounts and Online Store → Blog posts.
 
-Notes for the reviewer:
+Notes for the reviewer (from the original submission — billing ran in test mode
+for the review; the live app has since switched `SHOPIFY_BILLING_TEST` to
+`false`, so this no longer applies to production):
 - The free Starter plan is limited to 10 products and 10 customers, and does not
   include orders. To test orders or larger volumes, use the test charge on the
   Basic plan (test mode is enabled, so no real money is charged).
@@ -388,7 +390,7 @@ see the standard Shopify approval screen.
 
 ---
 
-## What Shop Shift does *not* migrate
+## What Store Shift does *not* migrate
 
 > Not a listing field — this is for the FAQ, the `/developers/` page and the
 > reviewer notes. Every item here is something a merchant WILL hit, and finding
@@ -436,5 +438,5 @@ see the standard Shopify approval screen.
    `PLAN_SEED_OVERWRITE=true` (which resets every other limit too, so prefer the
    admin panel).
 
-> Legal entity across all public pages: **Webnday Pvt. Ltd**, with Shop Shift as
+> Legal entity across all public pages: **Webnday Pvt. Ltd**, with Store Shift as
 > its product. No registered address or named jurisdiction is published.

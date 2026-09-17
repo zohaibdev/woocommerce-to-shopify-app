@@ -29,5 +29,5 @@ View migration
 </x-mail::button>
 
 Thanks,<br>
-Shop Shift
+Store Shift
 </x-mail::message>

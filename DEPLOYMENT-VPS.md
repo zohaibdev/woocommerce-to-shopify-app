@@ -1,4 +1,4 @@
-# Deploying Shop Shift to a VPS (Ubuntu 24.04 + Apache)
+# Deploying Store Shift to a VPS (Ubuntu 24.04 + Apache)
 
 For a server you have root on. If you are on Hostinger **shared** hosting, use
 [DEPLOYMENT.md](DEPLOYMENT.md) instead — the two differ mainly in how the queue

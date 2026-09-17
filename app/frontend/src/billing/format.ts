@@ -57,7 +57,7 @@ export function reasonText(reason: string | null | undefined): string {
     case "merchant":
       return "cancelled by you";
     case "admin":
-      return "cancelled by Shop Shift support";
+      return "cancelled by Store Shift support";
     case "uninstalled":
       return "cancelled when the app was uninstalled";
     case "replaced":

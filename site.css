@@ -1,5 +1,5 @@
 /* ============================================================================
-   Shop Shift — shared styles for the public site (landing, legal, docs).
+   Store Shift — shared styles for the public site (landing, legal, docs).
    The embedded Shopify app has its own Polaris styling and never loads this.
    ========================================================================== */
 
@@ -8,7 +8,7 @@
   --muted:#5b6478;
   --line:#e6e8ef;
   --line-soft:#f0f2f7;
-  /* Shop Shift blue. One token drives the logo tile, every button, every link
+  /* Store Shift blue. One token drives the logo tile, every button, every link
      and the plan highlight, so the brand colour is changed here and nowhere
      else. --accent-strong is the hover/active shade, --accent-soft the tint
      used behind icons, callouts and success messages. */

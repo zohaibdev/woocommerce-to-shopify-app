@@ -34,7 +34,7 @@ class Branding
         $stored = self::stored();
 
         return [
-            'name' => $stored['name'] ?? 'Shop Shift',
+            'name' => $stored['name'] ?? 'Store Shift',
             'has_logo' => ! empty($stored['logo_path']),
             // Cache-busted so a replaced logo isn't served from an email client cache.
             'logo_url' => empty($stored['logo_path']) ? null : self::logoUrl($stored['updated'] ?? null),
@@ -83,7 +83,7 @@ class Branding
     public static function setName(string $name): void
     {
         $stored = AppSetting::read(self::KEY);
-        $stored['name'] = trim($name) ?: 'Shop Shift';
+        $stored['name'] = trim($name) ?: 'Store Shift';
 
         AppSetting::write(self::KEY, $stored);
         Cache::forget(self::CACHE_KEY);

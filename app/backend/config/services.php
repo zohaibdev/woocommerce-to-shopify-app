@@ -53,7 +53,11 @@ return [
         'app_url' => rtrim(env('SHOPIFY_APP_URL', env('APP_URL')), '/'),
         // Allowed clock skew (seconds) when validating session-token exp/nbf.
         'token_leeway' => (int) env('SHOPIFY_TOKEN_LEEWAY', 60),
-        // Test charges: merchants are never billed. Keep true until the app is live.
+        // Test charges: merchants are never billed. The app is live on the
+        // Shopify App Store, so .env.production sets this to false. The
+        // fallback here stays true on purpose — a deploy that forgets to set
+        // SHOPIFY_BILLING_TEST must fail safe into "nobody gets charged", not
+        // silently bill real merchants.
         'billing_test' => (bool) env('SHOPIFY_BILLING_TEST', true),
         // appSubscriptionCancel(prorate:). false (Shopify's default): no credit,
         // and the merchant keeps the plan until the end of the period they already

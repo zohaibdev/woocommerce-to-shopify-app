@@ -23,5 +23,5 @@ Open support
 @endif
 
 Thanks,<br>
-Shop Shift
+Store Shift
 </x-mail::message>

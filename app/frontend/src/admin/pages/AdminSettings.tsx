@@ -46,7 +46,7 @@ export default function AdminSettings() {
   const [settings, setSettings] = useState<MailSettings | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [branding, setBranding] = useState<BrandingSettings | null>(null);
-  const [brandName, setBrandName] = useState("Shop Shift");
+  const [brandName, setBrandName] = useState("Store Shift");
   const [brandingBusy, setBrandingBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -213,7 +213,7 @@ export default function AdminSettings() {
               label="Name shown in emails"
               value={brandName}
               onChange={setBrandName}
-              placeholder="Shop Shift"
+              placeholder="Store Shift"
               autoComplete="off"
               connectedRight={
                 <Button loading={brandingBusy} onClick={saveBrandName}>
@@ -307,7 +307,7 @@ export default function AdminSettings() {
                     label="From name"
                     value={draft.from_name}
                     onChange={set("from_name")}
-                    placeholder="Shop Shift"
+                    placeholder="Store Shift"
                     autoComplete="off"
                   />
                 </FormLayout.Group>

@@ -43,7 +43,7 @@ class MigrationDeveloperLog
 
     public function filename(): string
     {
-        return "shop-shift-debug-migration-{$this->migration->id}.txt";
+        return "store-shift-debug-migration-{$this->migration->id}.txt";
     }
 
     /**

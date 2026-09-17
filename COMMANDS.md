@@ -1,4 +1,4 @@
-# COMMANDS.md — Shop Shift
+# COMMANDS.md — Store Shift
 
 Operational and development command reference. **Every command here was verified
 against this repository** — `composer.json` scripts, `package.json` scripts, the

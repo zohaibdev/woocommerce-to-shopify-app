@@ -53,7 +53,7 @@ class MailSettingsTest extends TestCase
             'password' => 'super-secret',
             'scheme' => 'smtp',
             'from_address' => 'support@webnday.com',
-            'from_name' => 'Shop Shift',
+            'from_name' => 'Store Shift',
         ], $overrides);
     }
 
@@ -158,7 +158,7 @@ class MailSettingsTest extends TestCase
 
         $this->assertCount(1, $messages);
         $this->assertSame(
-            'Shop Shift SMTP test',
+            'Store Shift SMTP test',
             $messages[0]->getOriginalMessage()->getSubject(),
         );
     }

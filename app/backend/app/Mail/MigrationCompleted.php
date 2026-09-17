@@ -30,7 +30,7 @@ class MigrationCompleted extends Mailable
             default => "{$name} failed",
         };
 
-        return new Envelope(subject: 'Shop Shift — '.$subject);
+        return new Envelope(subject: 'Store Shift — '.$subject);
     }
 
     public function content(): Content

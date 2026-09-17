@@ -21,5 +21,5 @@ this address.
 </x-mail::panel>
 
 Thanks,<br>
-Shop Shift
+Store Shift
 </x-mail::message>

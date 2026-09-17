@@ -91,8 +91,8 @@ class EmailBrandingTest extends TestCase
 
         $html = (new MigrationCompleted($this->migration()))->render();
 
-        $this->assertStringContainsString('Shop Shift', $html);
-        $this->assertStringNotContainsString('Store Shift', $html);
+        $this->assertStringContainsString('Store Shift', $html);
+        $this->assertStringNotContainsString('Shop Shift', $html);
     }
 
     public function test_an_uploaded_logo_survives_the_settings_cache(): void
